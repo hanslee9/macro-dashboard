@@ -192,7 +192,10 @@ def main():
                 x=series_dict[name].index, y=normalize(series_dict[name]),
                 mode="lines", name=name, line=dict(color=color),
             ))
-        yaxis_conf = dict(title="정규화 지수 (시작점=100)")
+        yaxis_conf = dict(
+            title=dict(text="정규화 지수 (시작점=100)", font=dict(size=15)),
+            tickfont=dict(size=13),
+        )
         if log_opt:
             yaxis_conf["type"] = "log"  # 정규화값은 항상 양수라 로그 적용 안전
         fig.update_layout(
@@ -224,8 +227,8 @@ def main():
             ))
 
             axis_conf = dict(
-                title=dict(text=name, font=dict(color=color)),
-                tickfont=dict(color=color),
+                title=dict(text=name, font=dict(color=color, size=15)),
+                tickfont=dict(color=color, size=13),
                 side=slot["side"],
                 showgrid=(i == 0),  # 격자선은 첫 축 기준으로만 표시(그래프 혼잡 방지)
             )
@@ -287,7 +290,7 @@ def main():
             strength = _interpret_strength(result["corr"])
             sign = "+" if result["corr"] >= 0 else "−"
             st.markdown(
-                f"**[숫자 분석]** 기간: {result['start'].strftime('%Y-%m')} ~ {result['end'].strftime('%Y-%m')} "
+                f"**[분석기간]** {result['start'].strftime('%Y-%m')} ~ {result['end'].strftime('%Y-%m')} "
                 f"(월간 환산 표본 {result['n']}개) · 상관계수: **{sign}{abs(result['corr']):.2f}** ({strength})"
             )
             st.caption(
@@ -303,15 +306,15 @@ def main():
                     match = (expected == "+" and result["corr"] >= 0) or (expected == "-" and result["corr"] < 0)
                     match_txt = "이론과 방향 일치" if match else "⚠ 이론과 방향 불일치 (관계가 약화·역전됐을 가능성)"
                     expected_txt = "양(+)의 상관" if expected == "+" else "음(−)의 상관"
-                    st.markdown(f"**[서사]** 이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
+                    st.markdown(f"**[설명]** 이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
                 elif expected == "contrarian":
-                    st.markdown("**[서사]** 이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
+                    st.markdown("**[설명]** 이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
                                  "상관계수 부호보다 극단값(과열/과냉각) 여부를 참고하시는 것이 더 적절합니다.")
                 else:  # "context"
-                    st.markdown("**[서사]** 국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
+                    st.markdown("**[설명]** 국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
                 st.write(narrative["text"])
             else:
-                st.markdown("**[서사]**")
+                st.markdown("**[설명]**")
                 st.caption(
                     "이 조합에 대해 업계에서 널리 인정된 정성적 서사는 별도로 정리되어 있지 않습니다. "
                     "위 상관계수만으로 인과관계를 단정하지 말고, 다른 지표와 함께 교차 검증하시기 바랍니다."

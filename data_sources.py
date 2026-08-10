@@ -27,34 +27,41 @@ fred = Fred(api_key=st.secrets["FRED_API_KEY"])
 # ──────────────────────────────────────────────────────────
 INDICATORS = {
 
-    "경기·성장": {
+    "미국 거시지표": {
         "미국 실질GDP성장률":     {"source": "fred", "code": "A191RL1Q225SBEA", "freq": "분기"},
+        "미국 명목GDP":           {"source": "fred", "code": "GDP", "freq": "분기"},
+        "비농업고용자수":         {"source": "fred", "code": "PAYEMS", "freq": "월간"},
         "미국 CPI":               {"source": "fred", "code": "CPIAUCSL", "freq": "월간"},
+        "근원 CPI":               {"source": "fred", "code": "CPILFESL", "freq": "월간"},
         "미국 PPI":               {"source": "fred", "code": "PPIACO", "freq": "월간"},
         "미국 실업률":            {"source": "fred", "code": "UNRATE", "freq": "월간"},
         "미국 산업생산지수":       {"source": "fred", "code": "INDPRO", "freq": "월간"},
         "미국 소비자심리지수":     {"source": "fred", "code": "UMCSENT", "freq": "월간"},
     },
 
-    "통화·금리": {
+    "금리·통화": {
         "미국 기준금리(FFR)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
+        "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
+        "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
         "미국 10년 국채금리":     {"source": "fred", "code": "DGS10", "freq": "일간"},
         "미국 2Y-10Y 금리차":     {"source": "fred", "code": "T10Y2Y", "freq": "일간"},
         "미국 M2 통화량":         {"source": "fred", "code": "M2SL", "freq": "월간"},
         "연준 자산규모(Fed B/S)": {"source": "fred", "code": "WALCL", "freq": "주간"},
-        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
-        "달러인덱스(DXY)":        {"source": "yfinance", "code": "DX-Y.NYB", "freq": "일간"},
         "미국 30년 모기지금리":   {"source": "fred", "code": "MORTGAGE30US", "freq": "주간"},
+        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
+        "엔/달러 환율":           {"source": "fred", "code": "DEXJPUS", "freq": "일간"},
+        "달러인덱스(DXY)":        {"source": "yfinance", "code": "DX-Y.NYB", "freq": "일간"},
     },
 
-    "자본시장": {
+    "지수·주가": {
         "S&P500":                {"source": "yfinance", "code": "^GSPC", "freq": "일간"},
         "나스닥100":              {"source": "yfinance", "code": "^NDX", "freq": "일간"},
+        "다우존스":                {"source": "yfinance", "code": "^DJI", "freq": "일간"},
         "코스피":                 {"source": "yfinance", "code": "^KS11", "freq": "일간"},
         "코스닥":                 {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
+        "니케이225(일본)":        {"source": "yfinance", "code": "^N225", "freq": "일간"},
         "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
         "CBOE 풋/콜비율(주식)":   {"source": "cboe_putcall", "code": "equity", "freq": "일간"},
-        "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
     },
 
     "신용·부채": {
@@ -69,6 +76,12 @@ INDICATORS = {
     "외환·무역": {
         "미국 경상수지":          {"source": "fred", "code": "BOPBCA", "freq": "분기"},
         "미국 무역수지":          {"source": "fred", "code": "BOPGSTB", "freq": "월간"},
+    },
+
+    "원자재": {
+        "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
+        "금 선물":                {"source": "yfinance", "code": "GC=F", "freq": "일간"},
+        "은 선물":                {"source": "yfinance", "code": "SI=F", "freq": "일간"},
     },
 }
 
