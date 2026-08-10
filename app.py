@@ -62,14 +62,14 @@ def main():
         start_date = st.date_input(
             "시작일",
             value=pd.to_datetime("2015-01-01"),
-            min_value=pd.to_datetime("1990-01-01"),  # 미지정 시 기본값-10년으로 자동 제한되는 것을 방지
+            min_value=pd.to_datetime("1871-01-01"),  # CAPE(실러) 데이터가 1871년부터 있어 최대한 넓게 허용
             max_value=pd.to_datetime("today"),
         )
     with col2:
         end_date = st.date_input(
             "종료일",
             value=pd.to_datetime("today"),
-            min_value=pd.to_datetime("1990-01-01"),
+            min_value=pd.to_datetime("1871-01-01"),
             max_value=pd.to_datetime("today"),
         )
 
@@ -201,7 +201,7 @@ def main():
             color = COLORS[i % len(COLORS)]
             fig.add_trace(go.Scatter(
                 x=series_dict[name].index, y=normalize(series_dict[name]),
-                mode="lines", name=name, line=dict(color=color),
+                mode="lines", name=name, line=dict(color=color, width=1.3),
             ))
         yaxis_conf = dict(
             title=dict(text="정규화 지수 (시작점=100)", font=dict(size=15)),
@@ -234,7 +234,7 @@ def main():
 
             fig.add_trace(go.Scatter(
                 x=series_dict[name].index, y=series_dict[name],
-                mode="lines", name=name, line=dict(color=color), yaxis=yref,
+                mode="lines", name=name, line=dict(color=color, width=1.3), yaxis=yref,
             ))
 
             axis_conf = dict(
