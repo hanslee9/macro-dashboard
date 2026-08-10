@@ -145,9 +145,39 @@ def get_margin_debt(mode: str = "level") -> pd.Series:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
+    """
+    source/code 조합으로 직접 데이터를 가져오는 저수준 함수.
+    - 사전 정의된 INDICATORS 뿐 아니라, 사용자가 화면에서 즉석으로
+      입력한 FRED 코드 / yfinance 티커에도 그대로 재사용됨.
+    실패 시 예외를 그대로 올림 (호출부에서 사용자에게 에러 메시지 표시하도록).
+    """
+    if source == "fred":
+        s = fred.get_series(code, observation_start=start)
+        s.index = pd.to_datetime(s.index)
+        return s.dropna()
+
+    elif source == "yfinance":
+        df = yf.download(code, start=start, progress=False)
+        if df.empty:
+            return pd.Series(dtype=float)
+        s = df["Close"]
+        if isinstance(s, pd.DataFrame):  # 멀티인덱스 컬럼 방지
+            s = s.iloc[:, 0]
+        return s.dropna()
+
+    elif source == "finra_margin":
+        s = get_margin_debt(mode=code)  # code: "level" | "yoy"
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    else:
+        raise ValueError(f"알 수 없는 source: {source}")
+
+
 def get_series(indicator_name: str, start: str = "2015-01-01") -> pd.Series:
     """
-    지표명 하나를 받아 pandas Series(date index, float value) 반환.
+    사전 정의된 지표명(INDICATORS에 등록된 것)을 받아 pandas Series 반환.
     실패 시 빈 Series 반환 (UI에서 경고 처리).
     """
     meta = _FLAT.get(indicator_name)
@@ -155,30 +185,10 @@ def get_series(indicator_name: str, start: str = "2015-01-01") -> pd.Series:
         return pd.Series(dtype=float)
 
     try:
-        if meta["source"] == "fred":
-            s = fred.get_series(meta["code"], observation_start=start)
-            s.index = pd.to_datetime(s.index)
-            return s.dropna()
-
-        elif meta["source"] == "yfinance":
-            df = yf.download(meta["code"], start=start, progress=False)
-            if df.empty:
-                return pd.Series(dtype=float)
-            s = df["Close"]
-            if isinstance(s, pd.DataFrame):  # 멀티인덱스 컬럼 방지
-                s = s.iloc[:, 0]
-            return s.dropna()
-
-        elif meta["source"] == "finra_margin":
-            s = get_margin_debt(mode=meta["code"])  # code: "level" | "yoy"
-            s = s[s.index >= pd.to_datetime(start)]
-            return s.dropna()
-
+        return fetch_by_source(meta["source"], meta["code"], start)
     except Exception as e:
         st.warning(f"'{indicator_name}' 데이터 로딩 실패: {e}")
         return pd.Series(dtype=float)
-
-    return pd.Series(dtype=float)
 
 
 def normalize(series: pd.Series, base=100) -> pd.Series:
