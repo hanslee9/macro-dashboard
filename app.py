@@ -37,11 +37,12 @@ def main():
     grouped = list_indicator_names()
     all_names = [name for names in grouped.values() for name in names]
 
-    st.caption("카테고리: " + " · ".join(grouped.keys()))
+    st.caption("카테고리: " + " · ".join(grouped.keys()) + "  (※ 좌우 Y축 각 2개씩, 최대 4개 지표 권장)")
     selected = st.multiselect(
-        "비교할 지표를 2개 이상 선택하세요",
+        "비교할 지표를 2개 이상 선택하세요 (최대 4개 권장)",
         options=all_names,
         default=["나스닥100", "하이일드 스프레드(HY OAS, CDS프록시)"],
+        max_selections=4,
     )
 
     # ── 정규화 옵션 (단위가 다른 지표를 같은 스케일로 비교) ──
@@ -70,37 +71,83 @@ def main():
         st.error("선택한 지표의 데이터를 하나도 불러오지 못했습니다.")
         return
 
-    # ── 그래프 (정규화 모드: 단일 Y축 / 원본 모드: 좌우 2개 Y축) ──
+    # ── 그래프 ────────────────────────────────────────
+    # 색상 팔레트: 라인과 해당 Y축 색상을 동일하게 맞춰 구분 용이하게 함
+    COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]  # 파랑/빨강/초록/보라
+    names = list(series_dict.keys())
+    n = len(names)
+
     fig = go.Figure()
 
-    if normalize_opt:
-        for name, s in series_dict.items():
-            fig.add_trace(go.Scatter(x=s.index, y=normalize(s), mode="lines", name=name))
-        fig.update_layout(yaxis_title="정규화 지수 (시작점=100)")
+    # 플롯 영역을 좁혀서 오른쪽에 범례용 여백 확보
+    # (좌축 2개 필요 시 왼쪽도 좁혀야 하므로 지표 개수에 따라 domain 조정)
+    left_domain = 0.10 if n >= 3 else 0.06   # 왼쪽 축 2개면 여백 더 필요
+    right_domain = 0.72                       # 오른쪽 축 + 범례 공간 확보
 
-    else:
-        # 첫 번째 지표는 좌축, 나머지는 우축에 배치 (기존 나스닥100 vs 마진부채 차트 스타일)
-        names = list(series_dict.keys())
-        first = names[0]
-        fig.add_trace(go.Scatter(
-            x=series_dict[first].index, y=series_dict[first],
-            mode="lines", name=first, yaxis="y1"
-        ))
-        for name in names[1:]:
+    if normalize_opt:
+        # 정규화 모드: 모든 지표를 동일 스케일(시작점=100)로 단일 축 비교
+        for i, name in enumerate(names):
+            color = COLORS[i % len(COLORS)]
             fig.add_trace(go.Scatter(
-                x=series_dict[name].index, y=series_dict[name],
-                mode="lines", name=name, yaxis="y2"
+                x=series_dict[name].index, y=normalize(series_dict[name]),
+                mode="lines", name=name, line=dict(color=color),
             ))
         fig.update_layout(
-            yaxis=dict(title=first, side="left"),
-            yaxis2=dict(title=" / ".join(names[1:]) if len(names) > 1 else "",
-                        overlaying="y", side="right"),
+            yaxis=dict(title="정규화 지수 (시작점=100)"),
+            xaxis=dict(domain=[left_domain, right_domain]),
         )
 
+    else:
+        # 원본 단위 모드: 좌측 2개 + 우측 2개, 총 4개 Y축까지 지원
+        # 축 배치: [0]=왼쪽(메인), [1]=오른쪽(메인), [2]=왼쪽(보조, free), [3]=오른쪽(보조, free)
+        axis_slots = [
+            dict(key="yaxis",  side="left",  anchor="x",    position=None),
+            dict(key="yaxis2", side="right", anchor="x",    position=None),
+            dict(key="yaxis3", side="left",  anchor="free", position=left_domain - 0.06),
+            dict(key="yaxis4", side="right", anchor="free", position=right_domain + 0.06),
+        ]
+        trace_yref = ["y", "y2", "y3", "y4"]
+
+        layout_axes = {}
+        for i, name in enumerate(names):
+            slot = axis_slots[i] if i < 4 else axis_slots[3]  # 5개 이상이면 마지막 축 공유
+            color = COLORS[i % len(COLORS)]
+            yref = trace_yref[i] if i < 4 else trace_yref[3]
+
+            fig.add_trace(go.Scatter(
+                x=series_dict[name].index, y=series_dict[name],
+                mode="lines", name=name, line=dict(color=color), yaxis=yref,
+            ))
+
+            axis_conf = dict(
+                title=dict(text=name, font=dict(color=color)),
+                tickfont=dict(color=color),
+                side=slot["side"],
+                showgrid=(i == 0),  # 격자선은 첫 축 기준으로만 표시(그래프 혼잡 방지)
+            )
+            if slot["anchor"] == "free":
+                axis_conf.update(anchor="free", overlaying="y", position=slot["position"])
+            elif slot["key"] != "yaxis":
+                axis_conf.update(overlaying="y")
+
+            layout_axes[slot["key"]] = axis_conf
+
+        fig.update_layout(
+            xaxis=dict(domain=[left_domain, right_domain]),
+            **layout_axes,
+        )
+
+    # 범례: 그래프 오른쪽 빈 공간에 세로로 배치
     fig.update_layout(
-        height=550,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        margin=dict(l=40, r=40, t=40, b=40),
+        height=560,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            x=1.20, xanchor="left",
+            y=1, yanchor="top",
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        margin=dict(l=60, r=160, t=40, b=40),
         hovermode="x unified",
     )
 
