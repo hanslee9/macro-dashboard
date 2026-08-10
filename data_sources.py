@@ -10,6 +10,7 @@ Streamlit Cloud 배포 시:
 
 import io
 import requests
+import numpy as np
 import pandas as pd
 import streamlit as st
 from fredapi import Fred
@@ -87,7 +88,8 @@ INDICATORS = {
     },
 
     "밸류에이션(복합지표)": {
-        "버핏지수(시총/GDP, %)": {"source": "buffett_indicator", "code": "ratio", "freq": "일간(GDP는 분기, ffill)"},
+        "버핏지수(시총/GDP, %)":  {"source": "buffett_indicator", "code": "ratio", "freq": "분기"},
+        "버핏지수 추세이격률(%)": {"source": "buffett_deviation", "code": "pct", "freq": "분기"},
         "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
         "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
         "S&P500 배당수익률(%)":   {"source": "multpl", "code": "dividend_yield", "freq": "월간"},
@@ -292,33 +294,59 @@ def get_buffett_indicator() -> pd.Series:
     버핏지수(시가총액/GDP, %) 계산.
     - 분자: 연준 Z.1(자금순환) 통계 "All Sectors; Corporate Equities; Asset, Market Value Levels"
       (BOGZ1LM893064105Q) — 미국 전체 기업주식 시가총액을 직접 집계한 연준 공식 분기 데이터.
-    - 분모: 미국 명목GDP(FRED, 분기)
-    - 이전 버전은 야후파이낸스 Wilshire5000(^W5000) 지수를 "1포인트≈10억달러"로 근사해서 썼는데,
-      실제 배포 후 확인해보니 S&P500과 그래프 모양이 거의 구분 안 될 정도로 닮아 있어 신뢰도 문제가
-      의심됨. 두 시계열 다 연준·정부 공식 분기 통계로 교체해서 이 문제를 근본적으로 해결함.
+      FRED 원본은 1945년 4분기부터 존재함.
+    - 분모: 미국 명목GDP(FRED, 분기, 1947년 1분기부터 존재)
+    - 이전 버전(to_period 기반 결합)은 실제 배포 후 확인해보니 데이터가 1990년경부터만
+      나오는 버그가 있었음 — 분기 정렬 방식을 resample 기반으로 바꿔 더 안정적으로 수정.
     """
-    equity_value = fred.get_series("BOGZ1LM893064105Q", observation_start="1950-01-01")
+    equity_value = fred.get_series("BOGZ1LM893064105Q", observation_start="1945-01-01")
     equity_value.index = pd.to_datetime(equity_value.index)
     equity_value = equity_value.dropna() / 1000.0  # 백만달러 → 십억달러 (GDP와 단위 통일)
+    equity_q = equity_value.resample("QE").last()  # 분기말 기준으로 명확히 정렬
 
-    gdp = fred.get_series("GDP", observation_start="1950-01-01")  # 십억달러 단위, 분기
+    gdp = fred.get_series("GDP", observation_start="1945-01-01")  # 십억달러 단위, 분기
     gdp.index = pd.to_datetime(gdp.index)
     gdp = gdp.dropna()
+    gdp_q = gdp.resample("QE").last()
 
-    # 두 시계열 모두 분기 데이터이므로 분기(Period) 단위로 정렬해서 결합
-    eq_q = equity_value.copy()
-    eq_q.index = eq_q.index.to_period("Q")
-    gdp_q = gdp.copy()
-    gdp_q.index = gdp_q.index.to_period("Q")
-
-    combined = pd.DataFrame({"equity": eq_q, "gdp": gdp_q}).dropna()
+    combined = pd.DataFrame({"equity": equity_q, "gdp": gdp_q}).dropna()
     if combined.empty:
-        raise ValueError("버핏지수 계산을 위한 연준 시가총액·GDP 데이터 결합 결과가 비어 있습니다.")
+        raise ValueError(
+            "버핏지수 계산을 위한 연준 시가총액·GDP 데이터 결합 결과가 비어 있습니다. "
+            f"(시가총액 원본 범위: {equity_value.index.min()}~{equity_value.index.max()}, "
+            f"GDP 원본 범위: {gdp.index.min()}~{gdp.index.max()})"
+        )
 
     ratio = (combined["equity"] / combined["gdp"]) * 100
-    ratio.index = ratio.index.to_timestamp()
     ratio.name = "buffett_indicator_pct"
     return ratio
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_buffett_deviation() -> pd.Series:
+    """
+    버핏지수의 '장기추세선 대비 이격률(%)'을 계산.
+    - 전체 기간(1947년~현재) 버핏지수에 로그선형회귀를 적용해 장기추세선을 구하고,
+      실제값이 그 추세선보다 몇 % 위/아래에 있는지를 반환.
+    - 양수: 추세선보다 위(구조적 추세를 넘어선 추가 고평가)
+    - 음수: 추세선보다 아래(구조적 추세 대비 저평가)
+    - 목적: "격차가 벌어질 때 하락, 좁혀질 때 상승"이라는 가설을 이중축 착시 없이
+      정량적으로 검증하기 위한 파생지표. S&P500과 나란히 그려서 이격률의 고점·저점이
+      실제 주가 반전 시점과 맞아떨어지는지 시각적으로 확인하는 용도.
+    """
+    s = get_buffett_indicator().dropna()
+    if len(s) < 20:
+        raise ValueError("버핏지수 추세이격률 계산을 위한 표본이 너무 적습니다.")
+
+    x = np.arange(len(s))
+    y = np.log(s.values)
+    slope, intercept = np.polyfit(x, y, 1)  # 전체 기간 기준 장기(로그선형) 추세
+    trend = np.exp(slope * x + intercept)
+
+    deviation_pct = (s.values / trend - 1) * 100
+    out = pd.Series(deviation_pct, index=s.index)
+    out.name = "buffett_deviation_pct"
+    return out
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -355,6 +383,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "buffett_indicator":
         s = get_buffett_indicator()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "buffett_deviation":
+        s = get_buffett_deviation()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
