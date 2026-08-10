@@ -18,7 +18,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from data_sources import list_indicator_names, get_series, normalize
+from data_sources import list_indicator_names, get_series, normalize, fetch_by_source
 
 st.set_page_config(page_title="거시경제 지표 대시보드", layout="wide")
 
@@ -47,10 +47,55 @@ def main():
     grouped = list_indicator_names()
     all_names = [name for names in grouped.values() for name in names]
 
+    # ── 사용자가 화면에서 즉석으로 추가한 지표 (세션 한정) ──
+    if "custom_indicators" not in st.session_state:
+        st.session_state.custom_indicators = {}  # {표시이름: {"source":..., "code":...}}
+
+    with st.expander("➕ 지표 직접 추가 (FRED 코드 / 야후파이낸스 티커)"):
+        st.caption(
+            "여기서 추가한 지표는 **이번 접속에서만** 선택 목록에 나타납니다. "
+            "계속 쓰실 지표는 개발자(코드 관리자)에게 data_sources.py에 등록을 요청하세요."
+        )
+        c1, c2, c3 = st.columns([2, 1, 2])
+        with c1:
+            custom_display_name = st.text_input("표시할 이름", placeholder="예: 미국 신규주택착공")
+        with c2:
+            custom_source = st.selectbox("소스", ["fred", "yfinance"])
+        with c3:
+            custom_code = st.text_input(
+                "코드",
+                placeholder="FRED 예: HOUST  /  야후 예: ^TNX, AAPL, KRW=X",
+            )
+
+        if st.button("추가"):
+            if not custom_display_name or not custom_code:
+                st.warning("이름과 코드를 모두 입력해주세요.")
+            else:
+                try:
+                    test = fetch_by_source(custom_source, custom_code, start="2020-01-01")
+                    if test.empty:
+                        st.error("데이터를 가져오지 못했습니다. 코드를 확인해주세요.")
+                    else:
+                        st.session_state.custom_indicators[custom_display_name] = {
+                            "source": custom_source, "code": custom_code,
+                        }
+                        st.success(f"'{custom_display_name}' 추가 완료! 아래 선택 목록에서 고르실 수 있습니다.")
+                except Exception as e:
+                    st.error(f"조회 실패: {e}")
+
+        if st.session_state.custom_indicators:
+            st.caption("현재 세션에 추가된 지표: " + ", ".join(st.session_state.custom_indicators.keys()))
+            if st.button("추가 지표 전체 삭제"):
+                st.session_state.custom_indicators = {}
+                st.rerun()
+
+    custom_names = list(st.session_state.custom_indicators.keys())
+    all_names_with_custom = all_names + custom_names
+
     st.caption("카테고리: " + " · ".join(grouped.keys()) + "  (※ 좌우 Y축 각 2개씩, 최대 4개 지표 권장)")
     selected = st.multiselect(
         "비교할 지표를 2개 이상 선택하세요 (최대 4개 권장)",
-        options=all_names,
+        options=all_names_with_custom,
         default=["나스닥100", "하이일드 스프레드(HY OAS, CDS프록시)"],
         max_selections=4,
     )
@@ -78,7 +123,15 @@ def main():
     series_dict = {}
     with st.spinner("데이터 불러오는 중..."):
         for name in selected:
-            s = get_series(name, start=str(start_date))
+            if name in st.session_state.custom_indicators:
+                meta = st.session_state.custom_indicators[name]
+                try:
+                    s = fetch_by_source(meta["source"], meta["code"], start=str(start_date))
+                except Exception as e:
+                    st.warning(f"'{name}' 데이터 로딩 실패: {e}")
+                    continue
+            else:
+                s = get_series(name, start=str(start_date))
             s = s[s.index <= pd.to_datetime(end_date)]
             if s.empty:
                 st.warning(f"'{name}' 데이터를 가져오지 못했습니다.")
@@ -187,11 +240,37 @@ def main():
 
     # ── 원본 데이터 테이블 (선택적 확인용) ──
     with st.expander("원본 데이터 보기"):
-        combined = pd.DataFrame(series_dict)
-        st.dataframe(combined.tail(50))
+        st.caption(
+            "※ 지표마다 발표 주기가 다릅니다(예: 일간 지수 vs 월간 마진부채). "
+            "일간 기준으로 보면 월간 지표는 발표일에만 값이 채워지고 나머지는 빈 값으로 보이는 게 정상입니다."
+        )
+        combined = pd.DataFrame(series_dict).sort_index()
+
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            table_freq = st.selectbox(
+                "표시 주기",
+                ["일간(원본)", "주간", "월간"],
+                index=2,  # 월간 지표가 섞여 있을 때 보기 편하도록 기본값을 월간으로
+            )
+        with col_t2:
+            ffill_opt = st.checkbox("빈 값을 직전 값으로 채우기(ffill)", value=True)
+
+        if table_freq == "주간":
+            combined_display = combined.resample("W").last()
+        elif table_freq == "월간":
+            combined_display = combined.resample("ME").last()
+        else:
+            combined_display = combined
+
+        if ffill_opt:
+            combined_display = combined_display.ffill()
+
+        n_rows = st.slider("표시 행 수(최근 N개)", 10, 200, 50)
+        st.dataframe(combined_display.tail(n_rows))
         st.download_button(
-            "CSV 다운로드",
-            combined.to_csv().encode("utf-8-sig"),
+            "CSV 다운로드 (표시된 주기 기준)",
+            combined_display.to_csv().encode("utf-8-sig"),
             file_name="macro_indicators.csv",
         )
 
