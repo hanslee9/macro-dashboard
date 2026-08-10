@@ -169,150 +169,60 @@ def get_margin_debt(mode: str = "level") -> pd.Series:
 
 
 # ──────────────────────────────────────────────────────────
-# 실러(Yale) S&P500 PER / CAPE 데이터 (공개 엑셀, 인증 불필요, 1871~현재, 월간)
+# S&P500 PER / CAPE 데이터 (multpl.com 공개 HTML 표, 1871~현재, 월간)
+# 원래 예일대 실러 교수 원본 엑셀(ie_data.xls)에서 직접 가져오려 했으나,
+# 헤더가 2줄로 쪼개진 복잡한 구조라 파싱이 계속 깨져서(여러 차례 시도 실패),
+# 같은 실러 데이터를 훨씬 다루기 쉬운 "Date/Value" 두 컬럼짜리 HTML 표로
+# 정리해서 제공하는 multpl.com으로 소스를 변경함(출처는 동일하게 로버트 실러 데이터).
 # ──────────────────────────────────────────────────────────
-SHILLER_DATA_URL = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
-
-
-def _shiller_month_to_date(val: float) -> pd.Timestamp:
-    """Shiller 데이터의 'YYYY.MM' 형태 날짜값(예: 1999.01, 1999.1)을 실제 날짜로 변환."""
-    year = int(val)
-    month = int(round((val - year) * 100))
-    month = max(1, min(month, 12))
-    return pd.Timestamp(year=year, month=month, day=1)
+MULTPL_URLS = {
+    "cape": "https://www.multpl.com/shiller-pe/table/by-month",
+    "pe":   "https://www.multpl.com/s-p-500-pe-ratio/table/by-month",
+}
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)  # 월 1회 업데이트라 하루 캐시로 충분
-def _load_shiller_data() -> pd.DataFrame:
+def get_shiller_series(mode: str = "pe") -> pd.Series:
     """
-    예일대 로버트 실러 교수의 공개 데이터셋에서
-    S&P500 일반 PER과 CAPE(경기조정PER)를 월간 시계열로 반환.
-    반환: DataFrame(index=월별 날짜, columns=['pe', 'cape'])
+    mode='pe': 일반 트레일링 PER (S&P 500 PE Ratio)
+    mode='cape': 실러 CAPE(경기조정PER, Shiller PE Ratio)
+    multpl.com의 "Date | Value" 형태 HTML 표를 그대로 파싱.
+    """
+    if mode not in MULTPL_URLS:
+        raise ValueError(f"알 수 없는 mode: {mode}")
 
-    ie_data.xls는 헤더가 2줄로 쪼개져 있고 중간에 빈 스페이서 열이 섞여 있어
-    "헤더 텍스트로 컬럼 찾기"가 매우 취약함(외부 파서들도 대부분 이 방식을 포기하고
-    고정 컬럼 위치로 직접 잘라서 읽음). 이 구현도 동일한 방식을 쓰되,
-    데이터 시작 행은 "Date 값이 실제 숫자로 파싱되는 첫 행"을 찾아 자동 판별해서
-    파일의 안내문 줄 수가 조금 바뀌어도 깨지지 않도록 함.
-    """
+    url = MULTPL_URLS[mode]
     resp = requests.get(
-        SHILLER_DATA_URL,
+        url,
         timeout=30,
         headers={"User-Agent": "Mozilla/5.0 (compatible; macro-dashboard/1.0)"},
     )
     resp.raise_for_status()
-    raw_bytes = io.BytesIO(resp.content)
 
-    xls = pd.ExcelFile(raw_bytes)
-
-    # 1) 시트 선택
-    target_sheet = None
-    for name in xls.sheet_names:
-        if name.strip().lower() == "data":
-            target_sheet = name
+    tables = pd.read_html(io.StringIO(resp.text))
+    target = None
+    for t in tables:
+        cols = [str(c).strip().lower() for c in t.columns]
+        if "date" in cols and "value" in cols:
+            target = t
             break
-    if target_sheet is None:
-        for name in xls.sheet_names:
-            preview = xls.parse(name, header=None, nrows=20)
-            if preview.astype(str).apply(lambda col: col.str.contains("CAPE", case=False, na=False)).any().any():
-                target_sheet = name
-                break
-    if target_sheet is None:
-        raise ValueError(f"실러 데이터 파일에서 대상 시트를 찾지 못했습니다. (시트 목록: {xls.sheet_names})")
+    if target is None:
+        raise ValueError(f"multpl.com 페이지에서 Date/Value 표를 찾지 못했습니다. (표 개수: {len(tables)})")
 
-    raw = xls.parse(target_sheet, header=None)
+    target.columns = [str(c).strip().lower() for c in target.columns]
+    dates = pd.to_datetime(target["date"], format="%b %d, %Y", errors="coerce")
+    values = pd.to_numeric(target["value"], errors="coerce")
 
-    # 2) 데이터 시작 행 자동 판별: Date로 추정되는 열(0번째) 값이 1870~2035 범위의 숫자로 파싱되는 첫 행을 찾음
-    COL_DATE = 0
+    s = pd.Series(values.values, index=dates.values).dropna()
+    s.index = pd.to_datetime(s.index)
+    s = s[s.index.notna()].sort_index()
 
-    def _looks_like_valid_date(v) -> bool:
-        try:
-            f = float(v)
-        except (TypeError, ValueError):
-            return False
-        return 1870.0 <= f <= 2035.0
+    if s.empty:
+        raise ValueError("multpl.com 데이터 파싱 결과가 비어 있습니다.")
 
-    date_series_raw = raw.iloc[:, COL_DATE]
-    valid_mask = date_series_raw.apply(_looks_like_valid_date)
-    if not valid_mask.any():
-        raise ValueError("실러 데이터 파일에서 유효한 날짜값을 가진 행을 찾지 못했습니다. 파일 형식이 바뀌었을 수 있습니다.")
-
-    data = raw.loc[valid_mask].reset_index(drop=True)
-    dates = data.iloc[:, COL_DATE].apply(lambda v: _shiller_month_to_date(float(v)))
-
-    # 3) CAPE 열 자동 식별: 컬럼 '위치'를 고정으로 가정하지 않고, 값 자체의 특징으로 찾음.
-    #    CAPE는 역사적으로 약 4.8~44.2 사이에서만 움직였고(닷컴버블·현재가 최고 구간),
-    #    월별 변화가 완만한(10년 평균 이익 기반이라 급변하지 않음) 특성이 있어
-    #    이 두 조건(값 범위 + 완만한 변화)을 동시에 만족하는 열을 자동 탐색.
-    numeric_cols = {}
-    for j in range(1, raw.shape[1]):  # 0번(Date)은 제외
-        col_vals = pd.to_numeric(data.iloc[:, j], errors="coerce")
-        if col_vals.notna().sum() > len(data) * 0.5:  # 절반 이상 숫자로 해석되는 열만 후보
-            numeric_cols[j] = col_vals
-
-    def _cape_score(s: pd.Series) -> float | None:
-        recent = s.dropna()
-        if len(recent) < 24:
-            return None
-        last_val = recent.iloc[-1]
-        year_ago_val = recent.iloc[-13] if len(recent) >= 13 else recent.iloc[0]
-        # 범위 조건: 현재값이 CAPE의 현실적 범위(약 5~50) 안에 있어야 함
-        if not (5.0 <= last_val <= 50.0):
-            return None
-        # 완만함 조건: 최근 1년 사이 변화가 최근값의 60%를 넘지 않아야 함(급변 지표 배제)
-        if abs(last_val - year_ago_val) > last_val * 0.6:
-            return None
-        # 전체 역사 범위도 CAPE의 알려진 범위(약 4~45)와 크게 벗어나지 않아야 함
-        hist_min, hist_max = recent.min(), recent.max()
-        if hist_min < 0 or hist_max > 60:
-            return None
-        return last_val
-
-    cape_col = None
-    cape_candidates = {}
-    for j, s in numeric_cols.items():
-        score = _cape_score(s)
-        if score is not None:
-            cape_candidates[j] = score
-
-    if len(cape_candidates) == 1:
-        cape_col = next(iter(cape_candidates))
-    elif len(cape_candidates) > 1:
-        # 여러 후보가 나오면(예: 장기금리 GS10도 낮은 범위라 걸릴 수 있음) CAPE 알려진 최근값(약 40 내외)에 가장 가까운 열 채택
-        cape_col = min(cape_candidates, key=lambda j: abs(cape_candidates[j] - 40))
-
-    if cape_col is None:
-        # 진단 정보를 담아 실패 — 각 후보 열의 마지막 값을 그대로 보여줘서 다음 조정이 쉽도록 함
-        diag = {j: round(s.dropna().iloc[-1], 2) for j, s in numeric_cols.items() if s.notna().any()}
-        raise ValueError(f"CAPE로 추정되는 열을 찾지 못했습니다. (각 열의 최근값: {diag})")
-
-    cape = numeric_cols[cape_col]
-
-    # 4) 일반 PER: 통상 CAPE 바로 앞쪽에 위치한 'Real Price'/'Real Earnings' 조합으로 근사.
-    #    정확한 위치를 모르면 계산하지 않고 CAPE만 우선 제공(핵심 요청 지표).
-    price_col = cape_col - 5 if (cape_col - 5) in numeric_cols else None
-    earn_col = cape_col - 2 if (cape_col - 2) in numeric_cols else None
-    if price_col is not None and earn_col is not None:
-        pe = numeric_cols[price_col] / numeric_cols[earn_col]
-    else:
-        pe = pd.Series([float("nan")] * len(data))
-
-    out = pd.DataFrame({"pe": pe.values, "cape": cape.values}, index=dates.values)
-    out.index = pd.to_datetime(out.index)
-    out = out.sort_index().dropna(how="all")
-
-    if out.empty:
-        raise ValueError("실러 데이터 파싱 결과가 비어 있습니다.")
-
-    return out
-
-
-def get_shiller_series(mode: str = "pe") -> pd.Series:
-    """mode='pe': 일반 트레일링 PER, mode='cape': 실러 CAPE(경기조정PER)"""
-    df = _load_shiller_data()
-    s = df[mode].dropna()
     s.name = f"shiller_{mode}"
     return s
+
 
 
 # ──────────────────────────────────────────────────────────
