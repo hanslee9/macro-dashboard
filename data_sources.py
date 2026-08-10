@@ -214,21 +214,38 @@ def _load_shiller_data() -> pd.DataFrame:
     if target_sheet is None:
         raise ValueError(f"실러 데이터 파일에서 대상 시트를 찾지 못했습니다. (시트 목록: {xls.sheet_names})")
 
-    # 2) 헤더 행 탐색: 공백/대소문자 차이를 무시하고 셀 값이 정확히 'date'인 행을 찾음
+    # 2) 헤더 행 탐색: ie_data.xls는 헤더가 2줄로 나뉘어 있어(상단 대분류/하단 세부라벨),
+    #    단순히 "Date"라는 셀 하나만 찾으면 잘못된 줄(상단 장식 줄)을 잡을 수 있음.
+    #    그래서 "Date / Real Price / Real Earnings / CAPE"가 전부 존재하는 행을 검증까지 마친 후 채택.
+    #    다수의 외부 파서가 공통으로 쓰는 8번째 행(인덱스 7)을 최우선 후보로 시도.
     raw = xls.parse(target_sheet, header=None, nrows=30)
 
-    def _row_has_date_header(row) -> bool:
-        return any(str(v).strip().lower() == "date" for v in row.tolist())
+    def _try_header_row(idx: int):
+        try:
+            trial = xls.parse(target_sheet, header=idx, nrows=5)
+        except Exception:
+            return None
+        cols = [str(c).strip() for c in trial.columns]
+        has_date = any(c.lower() == "date" for c in cols)
+        has_cape = any(c.upper() == "CAPE" for c in cols)
+        has_price = any("Real Price" in c for c in cols)
+        has_earn = any("Real Earnings" in c for c in cols)
+        if has_date and has_cape and has_price and has_earn:
+            return cols
+        return None
 
     header_row_idx = None
-    for i in range(len(raw)):
-        if _row_has_date_header(raw.iloc[i]):
-            header_row_idx = i
+    candidate_rows = [7] + [i for i in range(min(len(raw), 20)) if i != 7]
+    for idx in candidate_rows:
+        if _try_header_row(idx) is not None:
+            header_row_idx = idx
             break
 
-    # 3) 못 찾으면 알려진 고정 위치(스킵 7행, 즉 8번째 행)로 폴백 — 여러 외부 파서에서 공통 확인된 값
     if header_row_idx is None:
-        header_row_idx = 7
+        raise ValueError(
+            "실러 데이터 파일에서 'Date/Real Price/Real Earnings/CAPE'가 모두 포함된 헤더 행을 찾지 못했습니다. "
+            f"(파일 형식이 바뀌었을 수 있습니다. 시트: {target_sheet})"
+        )
 
     df = xls.parse(target_sheet, header=header_row_idx)
     df.columns = [str(c).strip() for c in df.columns]
