@@ -189,36 +189,60 @@ def _load_shiller_data() -> pd.DataFrame:
     S&P500 일반 PER과 CAPE(경기조정PER)를 월간 시계열로 반환.
     반환: DataFrame(index=월별 날짜, columns=['pe', 'cape'])
     """
-    resp = requests.get(SHILLER_DATA_URL, timeout=30)
+    resp = requests.get(
+        SHILLER_DATA_URL,
+        timeout=30,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; macro-dashboard/1.0)"},
+    )
     resp.raise_for_status()
     raw_bytes = io.BytesIO(resp.content)
 
     xls = pd.ExcelFile(raw_bytes)
+
+    # 1) 시트 선택: 이름이 'data'인 시트를 우선 사용(공식 문서·다수 파서가 이 이름을 씀), 없으면 CAPE 텍스트로 탐색
     target_sheet = None
     for name in xls.sheet_names:
-        preview = xls.parse(name, header=None, nrows=15)
-        if preview.astype(str).apply(lambda col: col.str.contains("CAPE", case=False, na=False)).any().any():
+        if name.strip().lower() == "data":
             target_sheet = name
             break
     if target_sheet is None:
-        raise ValueError("실러 데이터 파일에서 CAPE가 포함된 시트를 찾지 못했습니다.")
+        for name in xls.sheet_names:
+            preview = xls.parse(name, header=None, nrows=20)
+            if preview.astype(str).apply(lambda col: col.str.contains("CAPE", case=False, na=False)).any().any():
+                target_sheet = name
+                break
+    if target_sheet is None:
+        raise ValueError(f"실러 데이터 파일에서 대상 시트를 찾지 못했습니다. (시트 목록: {xls.sheet_names})")
 
-    raw = xls.parse(target_sheet, header=None)
+    # 2) 헤더 행 탐색: 공백/대소문자 차이를 무시하고 셀 값이 정확히 'date'인 행을 찾음
+    raw = xls.parse(target_sheet, header=None, nrows=30)
+
+    def _row_has_date_header(row) -> bool:
+        return any(str(v).strip().lower() == "date" for v in row.tolist())
+
     header_row_idx = None
-    for i, row in raw.iterrows():
-        if row.astype(str).str.contains("^Date$", case=False, na=False, regex=True).any():
+    for i in range(len(raw)):
+        if _row_has_date_header(raw.iloc[i]):
             header_row_idx = i
             break
+
+    # 3) 못 찾으면 알려진 고정 위치(스킵 7행, 즉 8번째 행)로 폴백 — 여러 외부 파서에서 공통 확인된 값
     if header_row_idx is None:
-        raise ValueError("실러 데이터 파일에서 헤더 행을 찾지 못했습니다.")
+        header_row_idx = 7
 
     df = xls.parse(target_sheet, header=header_row_idx)
     df.columns = [str(c).strip() for c in df.columns]
 
-    date_col = next(c for c in df.columns if c.lower() == "date")
-    price_col = next(c for c in df.columns if "Real Price" in c)      # 'Real Total Return Price' 등은 제외되도록 정확 매칭
-    earn_col = next(c for c in df.columns if "Real Earnings" in c)     # 'Real TR Scaled Earnings' 등은 제외
-    cape_col = next(c for c in df.columns if c.strip() == "CAPE")
+    try:
+        date_col = next(c for c in df.columns if c.strip().lower() == "date")
+        price_col = next(c for c in df.columns if "Real Price" in c)      # 'Real Total Return Price' 등은 제외되도록 정확 매칭
+        earn_col = next(c for c in df.columns if "Real Earnings" in c)    # 'Real TR Scaled Earnings' 등은 제외
+        cape_col = next(c for c in df.columns if c.strip().upper() == "CAPE")
+    except StopIteration:
+        raise ValueError(
+            f"실러 데이터 파일의 컬럼 구조를 인식하지 못했습니다. "
+            f"(헤더 행 {header_row_idx}, 실제 컬럼: {list(df.columns)[:15]})"
+        )
 
     dates = df[date_col].dropna().apply(lambda v: _shiller_month_to_date(float(v)))
     pe = pd.to_numeric(df[price_col], errors="coerce") / pd.to_numeric(df[earn_col], errors="coerce")
@@ -227,6 +251,10 @@ def _load_shiller_data() -> pd.DataFrame:
     out = pd.DataFrame({"pe": pe.values, "cape": cape.values}, index=dates.values)
     out.index = pd.to_datetime(out.index)
     out = out.sort_index().dropna(how="all")
+
+    if out.empty:
+        raise ValueError("실러 데이터 파싱 결과가 비어 있습니다.")
+
     return out
 
 
