@@ -29,9 +29,19 @@ def main():
     # ── 기간 선택 ──────────────────────────────────
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("시작일", pd.to_datetime("2015-01-01"))
+        start_date = st.date_input(
+            "시작일",
+            value=pd.to_datetime("2015-01-01"),
+            min_value=pd.to_datetime("1990-01-01"),  # 미지정 시 기본값-10년으로 자동 제한되는 것을 방지
+            max_value=pd.to_datetime("today"),
+        )
     with col2:
-        end_date = st.date_input("종료일", pd.to_datetime("today"))
+        end_date = st.date_input(
+            "종료일",
+            value=pd.to_datetime("today"),
+            min_value=pd.to_datetime("1990-01-01"),
+            max_value=pd.to_datetime("today"),
+        )
 
     # ── 지표 선택 (카테고리별 그룹핑된 멀티셀렉트) ──
     grouped = list_indicator_names()
@@ -45,12 +55,20 @@ def main():
         max_selections=4,
     )
 
-    # ── 정규화 옵션 (단위가 다른 지표를 같은 스케일로 비교) ──
-    normalize_opt = st.checkbox(
-        "시작점 기준 정규화 (단위가 다른 지표를 100 기준으로 비교)",
-        value=False,
-        help="예: 지수(2500) vs 금리(4.5%)처럼 스케일이 다른 지표를 같은 그래프에서 형태 비교할 때 사용",
-    )
+    # ── 정규화 / 로그스케일 옵션 ──────────────────────
+    col_opt1, col_opt2 = st.columns(2)
+    with col_opt1:
+        normalize_opt = st.checkbox(
+            "시작점 기준 정규화 (단위가 다른 지표를 100 기준으로 비교)",
+            value=False,
+            help="예: 지수(2500) vs 금리(4.5%)처럼 스케일이 다른 지표를 같은 그래프에서 형태 비교할 때 사용",
+        )
+    with col_opt2:
+        log_opt = st.checkbox(
+            "로그 스케일 (Y축)",
+            value=False,
+            help="기간이 길어 초반 변화가 잘 안 보일 때 사용. 값이 0 이하인 지표(예: 금리차)는 자동으로 로그 적용에서 제외됩니다.",
+        )
 
     if len(selected) < 1:
         st.info("지표를 최소 1개 이상 선택해주세요.")
@@ -91,8 +109,11 @@ def main():
                 x=series_dict[name].index, y=normalize(series_dict[name]),
                 mode="lines", name=name, line=dict(color=color),
             ))
+        yaxis_conf = dict(title="정규화 지수 (시작점=100)")
+        if log_opt:
+            yaxis_conf["type"] = "log"  # 정규화값은 항상 양수라 로그 적용 안전
         fig.update_layout(
-            yaxis=dict(title="정규화 지수 (시작점=100)"),
+            yaxis=yaxis_conf,
             xaxis=dict(domain=[left_domain, right_domain]),
         )
 
@@ -108,6 +129,7 @@ def main():
         trace_yref = ["y", "y2", "y3", "y4"]
 
         layout_axes = {}
+        log_skipped = []
         for i, name in enumerate(names):
             slot = axis_slots[i] if i < 4 else axis_slots[3]  # 5개 이상이면 마지막 축 공유
             color = COLORS[i % len(COLORS)]
@@ -124,6 +146,13 @@ def main():
                 side=slot["side"],
                 showgrid=(i == 0),  # 격자선은 첫 축 기준으로만 표시(그래프 혼잡 방지)
             )
+            # 로그스케일: 0 이하 값이 있으면(예: 금리차) 적용 불가하므로 해당 축만 제외
+            if log_opt:
+                if (series_dict[name] > 0).all():
+                    axis_conf["type"] = "log"
+                else:
+                    log_skipped.append(name)
+
             if slot["anchor"] == "free":
                 axis_conf.update(anchor="free", overlaying="y", position=slot["position"])
             elif slot["key"] != "yaxis":
@@ -135,6 +164,9 @@ def main():
             xaxis=dict(domain=[left_domain, right_domain]),
             **layout_axes,
         )
+
+        if log_skipped:
+            st.caption(f"⚠ 0 이하 값이 포함되어 로그스케일 미적용: {', '.join(log_skipped)}")
 
     # 범례: 그래프 오른쪽 바로 옆(불필요한 여백 없이)에 세로로 배치
     legend_x = right_domain + (0.14 if n >= 3 else 0.06)
