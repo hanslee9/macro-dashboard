@@ -30,6 +30,7 @@ INDICATORS = {
     "경기·성장": {
         "미국 실질GDP성장률":     {"source": "fred", "code": "A191RL1Q225SBEA", "freq": "분기"},
         "미국 CPI":               {"source": "fred", "code": "CPIAUCSL", "freq": "월간"},
+        "미국 PPI":               {"source": "fred", "code": "PPIACO", "freq": "월간"},
         "미국 실업률":            {"source": "fred", "code": "UNRATE", "freq": "월간"},
         "미국 산업생산지수":       {"source": "fred", "code": "INDPRO", "freq": "월간"},
         "미국 소비자심리지수":     {"source": "fred", "code": "UMCSENT", "freq": "월간"},
@@ -52,6 +53,8 @@ INDICATORS = {
         "코스피":                 {"source": "yfinance", "code": "^KS11", "freq": "일간"},
         "코스닥":                 {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
         "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
+        "CBOE 풋/콜비율(주식)":   {"source": "cboe_putcall", "code": "equity", "freq": "일간"},
+        "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
     },
 
     "신용·부채": {
@@ -144,6 +147,52 @@ def get_margin_debt(mode: str = "level") -> pd.Series:
     return s
 
 
+# ──────────────────────────────────────────────────────────
+# CBOE 풋/콜비율 (공개 CSV, 인증 불필요, 일간)
+# ──────────────────────────────────────────────────────────
+CBOE_PUTCALL_URLS = {
+    "equity": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypc.csv",
+    "index":  "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/indexpcarchive.csv",
+}
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_putcall_ratio(kind: str = "equity") -> pd.Series:
+    """
+    CBOE 풋/콜비율(P/C Ratio) 일간 시계열 반환.
+    kind="equity": 개별주 옵션 기준 (일반적으로 더 널리 참고됨)
+    kind="index":  지수 옵션 기준
+    """
+    url = CBOE_PUTCALL_URLS[kind]
+    resp = requests.get(url, timeout=20)
+    resp.raise_for_status()
+
+    # CBOE CSV는 상단에 안내문구 몇 줄이 섞여 있어 헤더 행을 자동 탐색
+    raw = pd.read_csv(io.StringIO(resp.text), header=None, on_bad_lines="skip")
+    header_row_idx = None
+    for i, row in raw.iterrows():
+        if row.astype(str).str.contains("P/C Ratio|Trade_date", case=False, na=False, regex=True).any():
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        raise ValueError("CBOE CSV에서 헤더 행을 찾지 못했습니다.")
+
+    df = pd.read_csv(io.StringIO(resp.text), header=header_row_idx, on_bad_lines="skip")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    date_col = next(c for c in df.columns if "date" in c.lower())
+    ratio_col = next(c for c in df.columns if "ratio" in c.lower())
+
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    s = pd.Series(
+        pd.to_numeric(df[ratio_col], errors="coerce").values,
+        index=dates,
+    ).dropna()
+    s = s[s.index.notna()].sort_index()
+    s.name = f"CBOE_PC_ratio_{kind}"
+    return s
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
     """
@@ -168,6 +217,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "finra_margin":
         s = get_margin_debt(mode=code)  # code: "level" | "yoy"
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "cboe_putcall":
+        s = get_putcall_ratio(kind=code)  # code: "equity" | "index"
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
