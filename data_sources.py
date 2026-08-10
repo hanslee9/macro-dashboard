@@ -88,8 +88,12 @@ INDICATORS = {
 
     "밸류에이션(복합지표)": {
         "버핏지수(시총/GDP, %)": {"source": "buffett_indicator", "code": "ratio", "freq": "일간(GDP는 분기, ffill)"},
-        "S&P500 PER(일반)":      {"source": "shiller", "code": "pe", "freq": "월간"},
-        "S&P500 CAPE(실러PER)":  {"source": "shiller", "code": "cape", "freq": "월간"},
+        "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
+        "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
+        "S&P500 배당수익률(%)":   {"source": "multpl", "code": "dividend_yield", "freq": "월간"},
+        "S&P500 이익수익률(%)":   {"source": "multpl", "code": "earnings_yield", "freq": "월간"},
+        "S&P500 PBR(주가순자산)": {"source": "multpl", "code": "price_to_book", "freq": "월간"},
+        "S&P500 PSR(주가매출)":   {"source": "multpl", "code": "price_to_sales", "freq": "월간"},
     },
 }
 
@@ -169,24 +173,33 @@ def get_margin_debt(mode: str = "level") -> pd.Series:
 
 
 # ──────────────────────────────────────────────────────────
-# S&P500 PER / CAPE 데이터 (multpl.com 공개 HTML 표, 1871~현재, 월간)
-# 원래 예일대 실러 교수 원본 엑셀(ie_data.xls)에서 직접 가져오려 했으나,
-# 헤더가 2줄로 쪼개진 복잡한 구조라 파싱이 계속 깨져서(여러 차례 시도 실패),
-# 같은 실러 데이터를 훨씬 다루기 쉬운 "Date/Value" 두 컬럼짜리 HTML 표로
-# 정리해서 제공하는 multpl.com으로 소스를 변경함(출처는 동일하게 로버트 실러 데이터).
+# S&P500 밸류에이션 지표 (multpl.com 공개 HTML 표, 1871~현재, 월간)
+# 예일대 실러 교수 원본 엑셀은 헤더가 2줄로 쪼개진 복잡한 구조라 파싱이 계속 깨져서
+# (여러 차례 시도 실패), 같은 데이터를 "Date/Value" 두 컬럼짜리 HTML 표로 정리해서
+# 제공하는 multpl.com으로 소스를 변경. 사이트맵 확인 결과 같은 방식으로 여러
+# 밸류에이션 지표를 더 제공하고 있어(FRED/야후에는 없는 것들), 함께 등록함.
 # ──────────────────────────────────────────────────────────
 MULTPL_URLS = {
-    "cape": "https://www.multpl.com/shiller-pe/table/by-month",
-    "pe":   "https://www.multpl.com/s-p-500-pe-ratio/table/by-month",
+    "cape":            "https://www.multpl.com/shiller-pe/table/by-month",
+    "pe":              "https://www.multpl.com/s-p-500-pe-ratio/table/by-month",
+    "dividend_yield":  "https://www.multpl.com/s-p-500-dividend-yield/table/by-month",
+    "earnings_yield":  "https://www.multpl.com/s-p-500-earnings-yield/table/by-month",
+    "price_to_book":   "https://www.multpl.com/s-p-500-price-to-book/table/by-month",
+    "price_to_sales":  "https://www.multpl.com/s-p-500-price-to-sales/table/by-month",
 }
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)  # 월 1회 업데이트라 하루 캐시로 충분
-def get_shiller_series(mode: str = "pe") -> pd.Series:
+def get_multpl_series(mode: str) -> pd.Series:
     """
-    mode='pe': 일반 트레일링 PER (S&P 500 PE Ratio)
-    mode='cape': 실러 CAPE(경기조정PER, Shiller PE Ratio)
-    multpl.com의 "Date | Value" 형태 HTML 표를 그대로 파싱.
+    multpl.com의 "Date | Value" 형태 HTML 표를 그대로 파싱하는 범용 함수.
+    mode: MULTPL_URLS의 키 중 하나
+      - 'pe': 일반 트레일링 PER
+      - 'cape': 실러 CAPE(경기조정PER)
+      - 'dividend_yield': S&P500 배당수익률
+      - 'earnings_yield': S&P500 이익수익률(1/PER)
+      - 'price_to_book': S&P500 주가순자산비율(PBR)
+      - 'price_to_sales': S&P500 주가매출비율(PSR)
     """
     if mode not in MULTPL_URLS:
         raise ValueError(f"알 수 없는 mode: {mode}")
@@ -211,7 +224,9 @@ def get_shiller_series(mode: str = "pe") -> pd.Series:
 
     target.columns = [str(c).strip().lower() for c in target.columns]
     dates = pd.to_datetime(target["date"], format="%b %d, %Y", errors="coerce")
-    values = pd.to_numeric(target["value"], errors="coerce")
+    # 배당수익률·이익수익률 등은 '3.45%' 형태 문자열일 수 있어 % 기호 제거 후 숫자 변환
+    raw_values = target["value"].astype(str).str.replace("%", "", regex=False).str.strip()
+    values = pd.to_numeric(raw_values, errors="coerce")
 
     s = pd.Series(values.values, index=dates.values).dropna()
     s.index = pd.to_datetime(s.index)
@@ -271,36 +286,37 @@ def get_putcall_ratio(kind: str = "equity") -> pd.Series:
     return s
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False)  # GDP는 분기 발표라 자주 바뀌지 않음
+@st.cache_data(ttl=6 * 3600, show_spinner=False)  # GDP·Z.1 모두 분기 발표라 자주 바뀌지 않음
 def get_buffett_indicator() -> pd.Series:
     """
     버핏지수(시가총액/GDP, %) 계산.
-    - 분자: Wilshire 5000 전체시장지수(야후파이낸스 ^W5000) — FRED는 2024.6 자체 Wilshire 데이터 제공 중단
-    - 분모: 미국 명목GDP(FRED, 분기) → 일간으로 ffill 후 나눔
-    - 참고: Wilshire 지수 1포인트 ≈ 시가총액 10억달러라는 근사 관계를 사용한 관례적 계산법이며,
-      최근 시점에는 이 근사치가 다소 벌어졌다는 지적이 있어 절대수준(%)은 참고용으로만 활용 권장.
-      (추세·상관관계 분석 목적에는 문제없음)
+    - 분자: 연준 Z.1(자금순환) 통계 "All Sectors; Corporate Equities; Asset, Market Value Levels"
+      (BOGZ1LM893064105Q) — 미국 전체 기업주식 시가총액을 직접 집계한 연준 공식 분기 데이터.
+    - 분모: 미국 명목GDP(FRED, 분기)
+    - 이전 버전은 야후파이낸스 Wilshire5000(^W5000) 지수를 "1포인트≈10억달러"로 근사해서 썼는데,
+      실제 배포 후 확인해보니 S&P500과 그래프 모양이 거의 구분 안 될 정도로 닮아 있어 신뢰도 문제가
+      의심됨. 두 시계열 다 연준·정부 공식 분기 통계로 교체해서 이 문제를 근본적으로 해결함.
     """
-    wilshire = fred_like_yf = None
-    df = yf.download("^W5000", start="1990-01-01", progress=False)
-    if df.empty:
-        raise ValueError("Wilshire 5000(^W5000) 데이터를 가져오지 못했습니다.")
-    wilshire = df["Close"]
-    if isinstance(wilshire, pd.DataFrame):
-        wilshire = wilshire.iloc[:, 0]
-    wilshire = wilshire.dropna()
+    equity_value = fred.get_series("BOGZ1LM893064105Q", observation_start="1950-01-01")
+    equity_value.index = pd.to_datetime(equity_value.index)
+    equity_value = equity_value.dropna() / 1000.0  # 백만달러 → 십억달러 (GDP와 단위 통일)
 
-    gdp = fred.get_series("GDP", observation_start="1990-01-01")  # 십억달러 단위
+    gdp = fred.get_series("GDP", observation_start="1950-01-01")  # 십억달러 단위, 분기
     gdp.index = pd.to_datetime(gdp.index)
     gdp = gdp.dropna()
 
-    # GDP(분기)를 일간으로 확장(직전 값 유지) 후 Wilshire와 정렬
-    combined = pd.DataFrame({"wilshire": wilshire}).sort_index()
-    combined["gdp"] = gdp.reindex(combined.index, method="ffill")
-    combined = combined.dropna()
+    # 두 시계열 모두 분기 데이터이므로 분기(Period) 단위로 정렬해서 결합
+    eq_q = equity_value.copy()
+    eq_q.index = eq_q.index.to_period("Q")
+    gdp_q = gdp.copy()
+    gdp_q.index = gdp_q.index.to_period("Q")
 
-    # Wilshire는 포인트 단위(≈ 십억달러 시가총액 근사), GDP는 십억달러 → 비율*100 = %
-    ratio = (combined["wilshire"] / combined["gdp"]) * 100
+    combined = pd.DataFrame({"equity": eq_q, "gdp": gdp_q}).dropna()
+    if combined.empty:
+        raise ValueError("버핏지수 계산을 위한 연준 시가총액·GDP 데이터 결합 결과가 비어 있습니다.")
+
+    ratio = (combined["equity"] / combined["gdp"]) * 100
+    ratio.index = ratio.index.to_timestamp()
     ratio.name = "buffett_indicator_pct"
     return ratio
 
@@ -342,8 +358,8 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
-    elif source == "shiller":
-        s = get_shiller_series(mode=code)  # code: "pe" | "cape"
+    elif source == "multpl":
+        s = get_multpl_series(mode=code)
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
