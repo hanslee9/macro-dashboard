@@ -79,10 +79,9 @@ def main():
 
     fig = go.Figure()
 
-    # 플롯 영역을 좁혀서 오른쪽에 범례용 여백 확보
-    # (좌축 2개 필요 시 왼쪽도 좁혀야 하므로 지표 개수에 따라 domain 조정)
-    left_domain = 0.10 if n >= 3 else 0.06   # 왼쪽 축 2개면 여백 더 필요
-    right_domain = 0.72                       # 오른쪽 축 + 범례 공간 확보
+    # 플롯 영역 여백: 왼쪽은 보조축 유무에 따라, 오른쪽은 범례 폭만큼만 확보
+    left_domain = 0.11 if n >= 3 else 0.06     # 왼쪽 보조축 있으면 여백 더 필요
+    right_domain = 0.80 if n >= 3 else 0.86    # 오른쪽 보조축 있으면 여백 더 필요
 
     if normalize_opt:
         # 정규화 모드: 모든 지표를 동일 스케일(시작점=100)로 단일 축 비교
@@ -103,8 +102,8 @@ def main():
         axis_slots = [
             dict(key="yaxis",  side="left",  anchor="x",    position=None),
             dict(key="yaxis2", side="right", anchor="x",    position=None),
-            dict(key="yaxis3", side="left",  anchor="free", position=left_domain - 0.06),
-            dict(key="yaxis4", side="right", anchor="free", position=right_domain + 0.06),
+            dict(key="yaxis3", side="left",  anchor="free", position=left_domain - 0.07),
+            dict(key="yaxis4", side="right", anchor="free", position=right_domain + 0.07),
         ]
         trace_yref = ["y", "y2", "y3", "y4"]
 
@@ -137,17 +136,18 @@ def main():
             **layout_axes,
         )
 
-    # 범례: 그래프 오른쪽 빈 공간에 세로로 배치
+    # 범례: 그래프 오른쪽 바로 옆(불필요한 여백 없이)에 세로로 배치
+    legend_x = right_domain + (0.14 if n >= 3 else 0.06)
     fig.update_layout(
         height=560,
         showlegend=True,
         legend=dict(
             orientation="v",
-            x=1.20, xanchor="left",
+            x=legend_x, xanchor="left",
             y=1, yanchor="top",
             bgcolor="rgba(0,0,0,0)",
         ),
-        margin=dict(l=60, r=160, t=40, b=40),
+        margin=dict(l=60, r=140, t=40, b=40),
         hovermode="x unified",
     )
 
