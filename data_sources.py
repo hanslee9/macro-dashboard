@@ -1,12 +1,15 @@
 """
 data_sources.py
-거시경제 지표 통합 수집 모듈 (FRED + yfinance)
+거시경제 지표 통합 수집 모듈 (FRED + yfinance + FINRA)
 
 Streamlit Cloud 배포 시:
-  - requirements.txt 에 fredapi, yfinance, pandas 추가
+  - requirements.txt 에 fredapi, yfinance, pandas, openpyxl 추가
   - Streamlit Secrets 에 FRED_API_KEY 등록 (Public 레포이므로 코드에 직접 넣지 말 것)
+  - FINRA 마진부채는 공개 엑셀 파일을 직접 읽어오므로 별도 API 키 불필요
 """
 
+import io
+import requests
 import pandas as pd
 import streamlit as st
 from fredapi import Fred
@@ -56,6 +59,8 @@ INDICATORS = {
         "투자등급 스프레드(IG OAS)":            {"source": "fred", "code": "BAMLC0A0CM", "freq": "일간"},
         "미국 정부부채(총액)":                  {"source": "fred", "code": "GFDEBTN", "freq": "분기"},
         "미국 가계부채":                        {"source": "fred", "code": "HHDNS", "freq": "분기"},
+        "마진부채(FINRA, 잔액)":                {"source": "finra_margin", "code": "level", "freq": "월간"},
+        "마진부채(FINRA, YoY%)":                {"source": "finra_margin", "code": "yoy", "freq": "월간"},
     },
 
     "외환·무역": {
@@ -79,6 +84,64 @@ def _flatten():
 
 
 _FLAT = _flatten()
+
+# ──────────────────────────────────────────────────────────
+# FINRA 마진부채 (공개 엑셀, 인증 불필요, 1997.01 ~ 현재, 월간)
+# ──────────────────────────────────────────────────────────
+FINRA_MARGIN_URL = "https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx"
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)  # 월 1회 발표이므로 6시간 캐시로 충분
+def _load_finra_margin_debt() -> pd.Series:
+    """
+    FINRA 공개 엑셀에서 '고객 증권 마진계좌 부채잔액(Debit Balances)'을
+    월간 시계열(pandas Series, 단위: 백만달러)로 반환.
+    """
+    resp = requests.get(FINRA_MARGIN_URL, timeout=20)
+    resp.raise_for_status()
+    raw = pd.read_excel(io.BytesIO(resp.content), header=None)
+
+    # 헤더 행 위치를 자동 탐색 ('Debit'이 포함된 행)
+    header_row_idx = None
+    for i, row in raw.iterrows():
+        if row.astype(str).str.contains("Debit", case=False, na=False).any():
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        raise ValueError("FINRA 엑셀에서 헤더 행을 찾지 못했습니다.")
+
+    df = pd.read_excel(io.BytesIO(resp.content), header=header_row_idx)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    month_col = next(c for c in df.columns if "month" in c.lower() or "year" in c.lower())
+    debit_col = next(c for c in df.columns if "debit" in c.lower())
+
+    df = df[[month_col, debit_col]].dropna()
+    df.columns = ["month", "debit_balance"]
+
+    # 'Jun-26' 형태 파싱 (일부 파일은 datetime으로 이미 들어있는 경우도 있어 두 방식 시도)
+    dates = pd.to_datetime(df["month"], format="%b-%y", errors="coerce")
+    if dates.isna().mean() > 0.5:  # 형식이 다르면 일반 파서로 재시도
+        dates = pd.to_datetime(df["month"], errors="coerce")
+
+    s = pd.Series(
+        pd.to_numeric(df["debit_balance"], errors="coerce").values,
+        index=dates,
+    ).dropna()
+    s = s[s.index.notna()].sort_index()
+    s.name = "FINRA_margin_debit_balance"
+    return s
+
+
+def get_margin_debt(mode: str = "level") -> pd.Series:
+    """
+    mode="level": 마진부채 잔액(백만달러) 원본
+    mode="yoy":   전년동월대비 증감률(%)
+    """
+    s = _load_finra_margin_debt()
+    if mode == "yoy":
+        return (s.pct_change(12) * 100).dropna()
+    return s
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -104,6 +167,11 @@ def get_series(indicator_name: str, start: str = "2015-01-01") -> pd.Series:
             s = df["Close"]
             if isinstance(s, pd.DataFrame):  # 멀티인덱스 컬럼 방지
                 s = s.iloc[:, 0]
+            return s.dropna()
+
+        elif meta["source"] == "finra_margin":
+            s = get_margin_debt(mode=meta["code"])  # code: "level" | "yoy"
+            s = s[s.index >= pd.to_datetime(start)]
             return s.dropna()
 
     except Exception as e:
