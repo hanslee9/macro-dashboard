@@ -188,6 +188,12 @@ def _load_shiller_data() -> pd.DataFrame:
     예일대 로버트 실러 교수의 공개 데이터셋에서
     S&P500 일반 PER과 CAPE(경기조정PER)를 월간 시계열로 반환.
     반환: DataFrame(index=월별 날짜, columns=['pe', 'cape'])
+
+    ie_data.xls는 헤더가 2줄로 쪼개져 있고 중간에 빈 스페이서 열이 섞여 있어
+    "헤더 텍스트로 컬럼 찾기"가 매우 취약함(외부 파서들도 대부분 이 방식을 포기하고
+    고정 컬럼 위치로 직접 잘라서 읽음). 이 구현도 동일한 방식을 쓰되,
+    데이터 시작 행은 "Date 값이 실제 숫자로 파싱되는 첫 행"을 찾아 자동 판별해서
+    파일의 안내문 줄 수가 조금 바뀌어도 깨지지 않도록 함.
     """
     resp = requests.get(
         SHILLER_DATA_URL,
@@ -199,7 +205,7 @@ def _load_shiller_data() -> pd.DataFrame:
 
     xls = pd.ExcelFile(raw_bytes)
 
-    # 1) 시트 선택: 이름이 'data'인 시트를 우선 사용(공식 문서·다수 파서가 이 이름을 씀), 없으면 CAPE 텍스트로 탐색
+    # 1) 시트 선택
     target_sheet = None
     for name in xls.sheet_names:
         if name.strip().lower() == "data":
@@ -214,56 +220,42 @@ def _load_shiller_data() -> pd.DataFrame:
     if target_sheet is None:
         raise ValueError(f"실러 데이터 파일에서 대상 시트를 찾지 못했습니다. (시트 목록: {xls.sheet_names})")
 
-    # 2) 헤더 행 탐색: ie_data.xls는 헤더가 2줄로 나뉘어 있어(상단 대분류/하단 세부라벨),
-    #    단순히 "Date"라는 셀 하나만 찾으면 잘못된 줄(상단 장식 줄)을 잡을 수 있음.
-    #    그래서 "Date / Real Price / Real Earnings / CAPE"가 전부 존재하는 행을 검증까지 마친 후 채택.
-    #    다수의 외부 파서가 공통으로 쓰는 8번째 행(인덱스 7)을 최우선 후보로 시도.
-    raw = xls.parse(target_sheet, header=None, nrows=30)
+    raw = xls.parse(target_sheet, header=None)
 
-    def _try_header_row(idx: int):
+    # 2) 알려진 원본 컬럼 순서(0-indexed, 실제 스프레드시트의 물리적 열 위치)
+    #    Date=0, (스페이서)=1, P=2, D=3, E=4, CPI=5, DateFraction=6, GS10=7,
+    #    RealPrice=8, RealDividend=9, RealTotalReturnPrice=10, RealEarnings=11,
+    #    RealTRScaledEarnings=12, CAPE=13, (스페이서)=14, TRCAPE=15, ExcessCAPEYield=16, ...
+    COL_DATE, COL_REAL_PRICE, COL_REAL_EARNINGS, COL_CAPE = 0, 8, 11, 13
+    required_max_col = max(COL_DATE, COL_REAL_PRICE, COL_REAL_EARNINGS, COL_CAPE)
+    if raw.shape[1] <= required_max_col:
+        raise ValueError(
+            f"실러 데이터 파일의 열 개수가 예상보다 적습니다(파일 형식 변경 가능성). "
+            f"실제 열 개수: {raw.shape[1]}"
+        )
+
+    # 3) 데이터 시작 행 자동 판별: Date 열 값이 1870~2035 범위의 숫자로 파싱되는 첫 행을 찾음
+    date_series_raw = raw.iloc[:, COL_DATE]
+
+    def _looks_like_valid_date(v) -> bool:
         try:
-            trial = xls.parse(target_sheet, header=idx, nrows=5)
-        except Exception:
-            return None
-        cols = [str(c).strip() for c in trial.columns]
-        has_date = any(c.lower() == "date" for c in cols)
-        has_cape = any(c.upper() == "CAPE" for c in cols)
-        has_price = any("Real Price" in c for c in cols)
-        has_earn = any("Real Earnings" in c for c in cols)
-        if has_date and has_cape and has_price and has_earn:
-            return cols
-        return None
+            f = float(v)
+        except (TypeError, ValueError):
+            return False
+        return 1870.0 <= f <= 2035.0
 
-    header_row_idx = None
-    candidate_rows = [7] + [i for i in range(min(len(raw), 20)) if i != 7]
-    for idx in candidate_rows:
-        if _try_header_row(idx) is not None:
-            header_row_idx = idx
-            break
+    valid_mask = date_series_raw.apply(_looks_like_valid_date)
+    if not valid_mask.any():
+        raise ValueError("실러 데이터 파일에서 유효한 날짜값을 가진 행을 찾지 못했습니다. 파일 형식이 바뀌었을 수 있습니다.")
 
-    if header_row_idx is None:
-        raise ValueError(
-            "실러 데이터 파일에서 'Date/Real Price/Real Earnings/CAPE'가 모두 포함된 헤더 행을 찾지 못했습니다. "
-            f"(파일 형식이 바뀌었을 수 있습니다. 시트: {target_sheet})"
-        )
+    data = raw.loc[valid_mask].reset_index(drop=True)
 
-    df = xls.parse(target_sheet, header=header_row_idx)
-    df.columns = [str(c).strip() for c in df.columns]
+    dates = data.iloc[:, COL_DATE].apply(lambda v: _shiller_month_to_date(float(v)))
+    price = pd.to_numeric(data.iloc[:, COL_REAL_PRICE], errors="coerce")
+    earnings = pd.to_numeric(data.iloc[:, COL_REAL_EARNINGS], errors="coerce")
+    cape = pd.to_numeric(data.iloc[:, COL_CAPE], errors="coerce")
 
-    try:
-        date_col = next(c for c in df.columns if c.strip().lower() == "date")
-        price_col = next(c for c in df.columns if "Real Price" in c)      # 'Real Total Return Price' 등은 제외되도록 정확 매칭
-        earn_col = next(c for c in df.columns if "Real Earnings" in c)    # 'Real TR Scaled Earnings' 등은 제외
-        cape_col = next(c for c in df.columns if c.strip().upper() == "CAPE")
-    except StopIteration:
-        raise ValueError(
-            f"실러 데이터 파일의 컬럼 구조를 인식하지 못했습니다. "
-            f"(헤더 행 {header_row_idx}, 실제 컬럼: {list(df.columns)[:15]})"
-        )
-
-    dates = df[date_col].dropna().apply(lambda v: _shiller_month_to_date(float(v)))
-    pe = pd.to_numeric(df[price_col], errors="coerce") / pd.to_numeric(df[earn_col], errors="coerce")
-    cape = pd.to_numeric(df[cape_col], errors="coerce")
+    pe = price / earnings
 
     out = pd.DataFrame({"pe": pe.values, "cape": cape.values}, index=dates.values)
     out.index = pd.to_datetime(out.index)
