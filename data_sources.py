@@ -40,7 +40,9 @@ INDICATORS = {
     },
 
     "금리·통화": {
-        "미국 기준금리(FFR)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
+        "미국 기준금리(FFR, 실효금리)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
+        "미국 기준금리(목표상단)":          {"source": "fred", "code": "DFEDTARU", "freq": "일간"},
+        "미국 기준금리(목표하단)":          {"source": "fred", "code": "DFEDTARL", "freq": "일간"},
         "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
         "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
         "미국 10년 국채금리":     {"source": "fred", "code": "DGS10", "freq": "일간"},
@@ -82,6 +84,12 @@ INDICATORS = {
         "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
         "금 선물":                {"source": "yfinance", "code": "GC=F", "freq": "일간"},
         "은 선물":                {"source": "yfinance", "code": "SI=F", "freq": "일간"},
+    },
+
+    "밸류에이션(복합지표)": {
+        "버핏지수(시총/GDP, %)": {"source": "buffett_indicator", "code": "ratio", "freq": "일간(GDP는 분기, ffill)"},
+        "S&P500 PER(일반)":      {"source": "shiller", "code": "pe", "freq": "월간"},
+        "S&P500 CAPE(실러PER)":  {"source": "shiller", "code": "cape", "freq": "월간"},
     },
 }
 
@@ -161,6 +169,76 @@ def get_margin_debt(mode: str = "level") -> pd.Series:
 
 
 # ──────────────────────────────────────────────────────────
+# 실러(Yale) S&P500 PER / CAPE 데이터 (공개 엑셀, 인증 불필요, 1871~현재, 월간)
+# ──────────────────────────────────────────────────────────
+SHILLER_DATA_URL = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
+
+
+def _shiller_month_to_date(val: float) -> pd.Timestamp:
+    """Shiller 데이터의 'YYYY.MM' 형태 날짜값(예: 1999.01, 1999.1)을 실제 날짜로 변환."""
+    year = int(val)
+    month = int(round((val - year) * 100))
+    month = max(1, min(month, 12))
+    return pd.Timestamp(year=year, month=month, day=1)
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)  # 월 1회 업데이트라 하루 캐시로 충분
+def _load_shiller_data() -> pd.DataFrame:
+    """
+    예일대 로버트 실러 교수의 공개 데이터셋에서
+    S&P500 일반 PER과 CAPE(경기조정PER)를 월간 시계열로 반환.
+    반환: DataFrame(index=월별 날짜, columns=['pe', 'cape'])
+    """
+    resp = requests.get(SHILLER_DATA_URL, timeout=30)
+    resp.raise_for_status()
+    raw_bytes = io.BytesIO(resp.content)
+
+    xls = pd.ExcelFile(raw_bytes)
+    target_sheet = None
+    for name in xls.sheet_names:
+        preview = xls.parse(name, header=None, nrows=15)
+        if preview.astype(str).apply(lambda col: col.str.contains("CAPE", case=False, na=False)).any().any():
+            target_sheet = name
+            break
+    if target_sheet is None:
+        raise ValueError("실러 데이터 파일에서 CAPE가 포함된 시트를 찾지 못했습니다.")
+
+    raw = xls.parse(target_sheet, header=None)
+    header_row_idx = None
+    for i, row in raw.iterrows():
+        if row.astype(str).str.contains("^Date$", case=False, na=False, regex=True).any():
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        raise ValueError("실러 데이터 파일에서 헤더 행을 찾지 못했습니다.")
+
+    df = xls.parse(target_sheet, header=header_row_idx)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    date_col = next(c for c in df.columns if c.lower() == "date")
+    price_col = next(c for c in df.columns if "Real Price" in c)      # 'Real Total Return Price' 등은 제외되도록 정확 매칭
+    earn_col = next(c for c in df.columns if "Real Earnings" in c)     # 'Real TR Scaled Earnings' 등은 제외
+    cape_col = next(c for c in df.columns if c.strip() == "CAPE")
+
+    dates = df[date_col].dropna().apply(lambda v: _shiller_month_to_date(float(v)))
+    pe = pd.to_numeric(df[price_col], errors="coerce") / pd.to_numeric(df[earn_col], errors="coerce")
+    cape = pd.to_numeric(df[cape_col], errors="coerce")
+
+    out = pd.DataFrame({"pe": pe.values, "cape": cape.values}, index=dates.values)
+    out.index = pd.to_datetime(out.index)
+    out = out.sort_index().dropna(how="all")
+    return out
+
+
+def get_shiller_series(mode: str = "pe") -> pd.Series:
+    """mode='pe': 일반 트레일링 PER, mode='cape': 실러 CAPE(경기조정PER)"""
+    df = _load_shiller_data()
+    s = df[mode].dropna()
+    s.name = f"shiller_{mode}"
+    return s
+
+
+# ──────────────────────────────────────────────────────────
 # CBOE 풋/콜비율 (공개 CSV, 인증 불필요, 일간)
 # ──────────────────────────────────────────────────────────
 CBOE_PUTCALL_URLS = {
@@ -206,6 +284,40 @@ def get_putcall_ratio(kind: str = "equity") -> pd.Series:
     return s
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)  # GDP는 분기 발표라 자주 바뀌지 않음
+def get_buffett_indicator() -> pd.Series:
+    """
+    버핏지수(시가총액/GDP, %) 계산.
+    - 분자: Wilshire 5000 전체시장지수(야후파이낸스 ^W5000) — FRED는 2024.6 자체 Wilshire 데이터 제공 중단
+    - 분모: 미국 명목GDP(FRED, 분기) → 일간으로 ffill 후 나눔
+    - 참고: Wilshire 지수 1포인트 ≈ 시가총액 10억달러라는 근사 관계를 사용한 관례적 계산법이며,
+      최근 시점에는 이 근사치가 다소 벌어졌다는 지적이 있어 절대수준(%)은 참고용으로만 활용 권장.
+      (추세·상관관계 분석 목적에는 문제없음)
+    """
+    wilshire = fred_like_yf = None
+    df = yf.download("^W5000", start="1990-01-01", progress=False)
+    if df.empty:
+        raise ValueError("Wilshire 5000(^W5000) 데이터를 가져오지 못했습니다.")
+    wilshire = df["Close"]
+    if isinstance(wilshire, pd.DataFrame):
+        wilshire = wilshire.iloc[:, 0]
+    wilshire = wilshire.dropna()
+
+    gdp = fred.get_series("GDP", observation_start="1990-01-01")  # 십억달러 단위
+    gdp.index = pd.to_datetime(gdp.index)
+    gdp = gdp.dropna()
+
+    # GDP(분기)를 일간으로 확장(직전 값 유지) 후 Wilshire와 정렬
+    combined = pd.DataFrame({"wilshire": wilshire}).sort_index()
+    combined["gdp"] = gdp.reindex(combined.index, method="ffill")
+    combined = combined.dropna()
+
+    # Wilshire는 포인트 단위(≈ 십억달러 시가총액 근사), GDP는 십억달러 → 비율*100 = %
+    ratio = (combined["wilshire"] / combined["gdp"]) * 100
+    ratio.name = "buffett_indicator_pct"
+    return ratio
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
     """
@@ -235,6 +347,16 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "cboe_putcall":
         s = get_putcall_ratio(kind=code)  # code: "equity" | "index"
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "buffett_indicator":
+        s = get_buffett_indicator()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "shiller":
+        s = get_shiller_series(mode=code)  # code: "pe" | "cape"
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
