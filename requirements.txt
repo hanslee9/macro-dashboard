@@ -4,5 +4,6 @@ fredapi
 yfinance
 plotly
 openpyxl
+xlrd
 requests
 scipy

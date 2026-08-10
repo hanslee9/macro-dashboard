@@ -153,19 +153,30 @@ def main():
     series_dict = {}
     with st.spinner("데이터 불러오는 중..."):
         for name in selected:
-            if name in st.session_state.custom_indicators:
-                meta = st.session_state.custom_indicators[name]
-                try:
+            try:
+                if name in st.session_state.custom_indicators:
+                    meta = st.session_state.custom_indicators[name]
                     s = fetch_by_source(meta["source"], meta["code"], start=str(start_date))
-                except Exception as e:
-                    st.warning(f"'{name}' 데이터 로딩 실패: {e}")
-                    continue
-            else:
-                s = get_series(name, start=str(start_date))
-            s = s[s.index <= pd.to_datetime(end_date)]
+                else:
+                    s = get_series(name, start=str(start_date))
+            except Exception as e:
+                st.warning(f"'{name}' 데이터 로딩 실패: {e}")
+                continue
+
             if s.empty:
                 st.warning(f"'{name}' 데이터를 가져오지 못했습니다.")
                 continue
+
+            # 날짜 인덱스가 아닌 경우(로딩 실패 등으로 빈 Series 등) 안전하게 건너뜀
+            if not pd.api.types.is_datetime64_any_dtype(s.index):
+                st.warning(f"'{name}' 데이터 형식이 올바르지 않아 건너뜁니다.")
+                continue
+
+            s = s[s.index <= pd.to_datetime(end_date)]
+            if s.empty:
+                st.warning(f"'{name}' 선택한 기간에 해당하는 데이터가 없습니다.")
+                continue
+
             series_dict[name] = s
 
     if not series_dict:
