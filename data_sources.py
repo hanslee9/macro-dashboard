@@ -222,20 +222,8 @@ def _load_shiller_data() -> pd.DataFrame:
 
     raw = xls.parse(target_sheet, header=None)
 
-    # 2) 알려진 원본 컬럼 순서(0-indexed, 실제 스프레드시트의 물리적 열 위치)
-    #    Date=0, (스페이서)=1, P=2, D=3, E=4, CPI=5, DateFraction=6, GS10=7,
-    #    RealPrice=8, RealDividend=9, RealTotalReturnPrice=10, RealEarnings=11,
-    #    RealTRScaledEarnings=12, CAPE=13, (스페이서)=14, TRCAPE=15, ExcessCAPEYield=16, ...
-    COL_DATE, COL_REAL_PRICE, COL_REAL_EARNINGS, COL_CAPE = 0, 8, 11, 13
-    required_max_col = max(COL_DATE, COL_REAL_PRICE, COL_REAL_EARNINGS, COL_CAPE)
-    if raw.shape[1] <= required_max_col:
-        raise ValueError(
-            f"실러 데이터 파일의 열 개수가 예상보다 적습니다(파일 형식 변경 가능성). "
-            f"실제 열 개수: {raw.shape[1]}"
-        )
-
-    # 3) 데이터 시작 행 자동 판별: Date 열 값이 1870~2035 범위의 숫자로 파싱되는 첫 행을 찾음
-    date_series_raw = raw.iloc[:, COL_DATE]
+    # 2) 데이터 시작 행 자동 판별: Date로 추정되는 열(0번째) 값이 1870~2035 범위의 숫자로 파싱되는 첫 행을 찾음
+    COL_DATE = 0
 
     def _looks_like_valid_date(v) -> bool:
         try:
@@ -244,18 +232,70 @@ def _load_shiller_data() -> pd.DataFrame:
             return False
         return 1870.0 <= f <= 2035.0
 
+    date_series_raw = raw.iloc[:, COL_DATE]
     valid_mask = date_series_raw.apply(_looks_like_valid_date)
     if not valid_mask.any():
         raise ValueError("실러 데이터 파일에서 유효한 날짜값을 가진 행을 찾지 못했습니다. 파일 형식이 바뀌었을 수 있습니다.")
 
     data = raw.loc[valid_mask].reset_index(drop=True)
-
     dates = data.iloc[:, COL_DATE].apply(lambda v: _shiller_month_to_date(float(v)))
-    price = pd.to_numeric(data.iloc[:, COL_REAL_PRICE], errors="coerce")
-    earnings = pd.to_numeric(data.iloc[:, COL_REAL_EARNINGS], errors="coerce")
-    cape = pd.to_numeric(data.iloc[:, COL_CAPE], errors="coerce")
 
-    pe = price / earnings
+    # 3) CAPE 열 자동 식별: 컬럼 '위치'를 고정으로 가정하지 않고, 값 자체의 특징으로 찾음.
+    #    CAPE는 역사적으로 약 4.8~44.2 사이에서만 움직였고(닷컴버블·현재가 최고 구간),
+    #    월별 변화가 완만한(10년 평균 이익 기반이라 급변하지 않음) 특성이 있어
+    #    이 두 조건(값 범위 + 완만한 변화)을 동시에 만족하는 열을 자동 탐색.
+    numeric_cols = {}
+    for j in range(1, raw.shape[1]):  # 0번(Date)은 제외
+        col_vals = pd.to_numeric(data.iloc[:, j], errors="coerce")
+        if col_vals.notna().sum() > len(data) * 0.5:  # 절반 이상 숫자로 해석되는 열만 후보
+            numeric_cols[j] = col_vals
+
+    def _cape_score(s: pd.Series) -> float | None:
+        recent = s.dropna()
+        if len(recent) < 24:
+            return None
+        last_val = recent.iloc[-1]
+        year_ago_val = recent.iloc[-13] if len(recent) >= 13 else recent.iloc[0]
+        # 범위 조건: 현재값이 CAPE의 현실적 범위(약 5~50) 안에 있어야 함
+        if not (5.0 <= last_val <= 50.0):
+            return None
+        # 완만함 조건: 최근 1년 사이 변화가 최근값의 60%를 넘지 않아야 함(급변 지표 배제)
+        if abs(last_val - year_ago_val) > last_val * 0.6:
+            return None
+        # 전체 역사 범위도 CAPE의 알려진 범위(약 4~45)와 크게 벗어나지 않아야 함
+        hist_min, hist_max = recent.min(), recent.max()
+        if hist_min < 0 or hist_max > 60:
+            return None
+        return last_val
+
+    cape_col = None
+    cape_candidates = {}
+    for j, s in numeric_cols.items():
+        score = _cape_score(s)
+        if score is not None:
+            cape_candidates[j] = score
+
+    if len(cape_candidates) == 1:
+        cape_col = next(iter(cape_candidates))
+    elif len(cape_candidates) > 1:
+        # 여러 후보가 나오면(예: 장기금리 GS10도 낮은 범위라 걸릴 수 있음) CAPE 알려진 최근값(약 40 내외)에 가장 가까운 열 채택
+        cape_col = min(cape_candidates, key=lambda j: abs(cape_candidates[j] - 40))
+
+    if cape_col is None:
+        # 진단 정보를 담아 실패 — 각 후보 열의 마지막 값을 그대로 보여줘서 다음 조정이 쉽도록 함
+        diag = {j: round(s.dropna().iloc[-1], 2) for j, s in numeric_cols.items() if s.notna().any()}
+        raise ValueError(f"CAPE로 추정되는 열을 찾지 못했습니다. (각 열의 최근값: {diag})")
+
+    cape = numeric_cols[cape_col]
+
+    # 4) 일반 PER: 통상 CAPE 바로 앞쪽에 위치한 'Real Price'/'Real Earnings' 조합으로 근사.
+    #    정확한 위치를 모르면 계산하지 않고 CAPE만 우선 제공(핵심 요청 지표).
+    price_col = cape_col - 5 if (cape_col - 5) in numeric_cols else None
+    earn_col = cape_col - 2 if (cape_col - 2) in numeric_cols else None
+    if price_col is not None and earn_col is not None:
+        pe = numeric_cols[price_col] / numeric_cols[earn_col]
+    else:
+        pe = pd.Series([float("nan")] * len(data))
 
     out = pd.DataFrame({"pe": pe.values, "cape": cape.values}, index=dates.values)
     out.index = pd.to_datetime(out.index)
