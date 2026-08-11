@@ -175,6 +175,72 @@ def _compute_granger_causality(s_a: pd.Series, s_b: pd.Series, lags=GRANGER_LAGS
     return result
 
 
+ROLLING_WINDOW_DEFAULT = 60   # 5년 창 (정상화 후 표본 기준)
+ROLLING_STEP_DEFAULT = 3      # 3개월씩 창을 이동
+ROLLING_LAG_DEFAULT = 3       # 롤링 분석에 사용할 고정 lag (단기 반응을 대표하는 값)
+
+
+def _compute_rolling_granger(
+    s_a: pd.Series, s_b: pd.Series,
+    lag: int = ROLLING_LAG_DEFAULT, window: int = ROLLING_WINDOW_DEFAULT, step: int = ROLLING_STEP_DEFAULT,
+):
+    """
+    시간에 따라 그레인저 인과관계 자체가 변하는지(=국면에 따른 관계 변화, "추세의 인과관계")를 보기 위한
+    롤링윈도우 그레인저 검정.
+    - 전체 기간을 하나로 뭉쳐서 보는 기존 [그레인저 인과검정]과 달리, window개월짜리 구간을 step개월씩
+      이동시키며 각 구간마다 별도로 양방향 검정을 반복 수행.
+    - lag는 window 대비 안정적인 결과를 위해 하나로 고정. 창마다 lag를 바꾸면 결과 간
+      비교가 어려워지므로, "관계의 유무·방향이 시간에 따라 어떻게 변하는가"에 집중하는 설계.
+    - 표본(정상화 후 전체 공통구간)이 window보다 짧으면 계산 불가(빈 windows) 반환.
+    반환: {"n": 전체 공통표본 수, "windows": [{"end": 창 끝 시점, "a_causes_b": p or None, "b_causes_a": p or None}, ...]}
+    """
+    a_d = _prepare_stationary_series(s_a)
+    b_d = _prepare_stationary_series(s_b)
+    combined = pd.DataFrame({"a": a_d, "b": b_d}).dropna()
+    n = len(combined)
+
+    if n < window:
+        return {"n": n, "windows": []}
+
+    windows = []
+    for start in range(0, n - window + 1, step):
+        chunk = combined.iloc[start:start + window]
+        end_date = chunk.index[-1]
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                gc_a_to_b = grangercausalitytests(chunk[["b", "a"]], maxlag=lag, verbose=False)
+                gc_b_to_a = grangercausalitytests(chunk[["a", "b"]], maxlag=lag, verbose=False)
+            p_ab = gc_a_to_b[lag][0]["ssr_ftest"][1]
+            p_ba = gc_b_to_a[lag][0]["ssr_ftest"][1]
+        except Exception:
+            p_ab, p_ba = None, None
+        windows.append({"end": end_date, "a_causes_b": p_ab, "b_causes_a": p_ba})
+
+    return {"n": n, "windows": windows}
+
+
+def _rolling_granger_figure(name_a: str, name_b: str, rolling: dict, window: int, step: int, lag: int) -> go.Figure:
+    """롤링윈도우 그레인저 p-value를 시계열 라인차트로 시각화 (0.05 기준선 포함)."""
+    ends = [w["end"] for w in rolling["windows"]]
+    p_ab = [w["a_causes_b"] for w in rolling["windows"]]
+    p_ba = [w["b_causes_a"] for w in rolling["windows"]]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=ends, y=p_ab, mode="lines+markers", name=f"{name_a} → {name_b}"))
+    fig.add_trace(go.Scatter(x=ends, y=p_ba, mode="lines+markers", name=f"{name_b} → {name_a}"))
+    fig.add_hline(y=0.05, line_dash="dash", line_color="red", annotation_text="유의수준 0.05")
+    fig.update_layout(
+        height=320,
+        margin=dict(l=10, r=10, t=30, b=10),
+        yaxis_title="p-value",
+        xaxis_title=f"창 크기 {window}개월 / {step}개월씩 이동 / lag={lag}개월 (각 점 = 그 시점까지의 {window}개월 창)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_yaxes(range=[0, max(1.0, max([p for p in p_ab + p_ba if p is not None], default=1.0))])
+    return fig
+
+
 def main():
     st.header("📊 거시경제 지표 비교")
 
@@ -565,6 +631,74 @@ def main():
                     "⚠ 지표 자체의 자기상관(autocorrelation) 때문에 '정확한 시차'를 하나로 특정하기는 어렵습니다. "
                     "여러 lag에서 p<0.05가 반복적으로 나타나는지를 함께 보는 것을 권장합니다."
                 )
+
+                # 2-2) [추세의 인과관계] 롤링윈도우 — 관계 자체가 국면에 따라 변하는지 시계열로 확인
+                with st.expander("📉 추세의 인과관계 보기 (롤링윈도우)"):
+                    st.caption(
+                        "※ 전체 기간을 하나로 뭉쳐 계산한 위 표와 달리, 일정 구간(창)을 이동시키며 반복 검정해 "
+                        "'관계 자체가 시간에 따라 강해지거나 약해지거나 사라지는지'를 봅니다. "
+                        "빨간 점선(0.05) 아래로 내려간 구간이 유의했던 구간입니다. "
+                        "아래 슬라이더로 창 크기·이동폭·lag를 바꿔가며 안정적인 신호가 나오는 조합을 찾아보세요."
+                    )
+                    rc1, rc2, rc3 = st.columns(3)
+                    with rc1:
+                        roll_window = st.slider(
+                            "창 크기(개월)", min_value=24, max_value=96,
+                            value=ROLLING_WINDOW_DEFAULT, step=6,
+                            key=f"roll_window_{name_a}_{name_b}",
+                            help="창이 클수록 결과는 안정적이지만 국면 변화에 둔감해지고, 작을수록 민감하지만 표본부족으로 불안정해질 수 있습니다.",
+                        )
+                    with rc2:
+                        roll_step = st.slider(
+                            "이동폭(개월)", min_value=1, max_value=12,
+                            value=ROLLING_STEP_DEFAULT, step=1,
+                            key=f"roll_step_{name_a}_{name_b}",
+                            help="작을수록 그래프가 촘촘해지지만 인접 창끼리 겹치는 데이터가 많아져 값이 부드럽게(smoothed) 보일 수 있습니다.",
+                        )
+                    with rc3:
+                        roll_lag = st.slider(
+                            "lag(개월)", min_value=1, max_value=12,
+                            value=ROLLING_LAG_DEFAULT, step=1,
+                            key=f"roll_lag_{name_a}_{name_b}",
+                            help="창 안에서 검정할 시차. 창 크기 대비 너무 크면(경험적으로 창의 1/5 초과) 자유도 부족 우려가 있습니다.",
+                        )
+
+                    if roll_lag * 5 > roll_window:
+                        st.warning(
+                            f"⚠ 창 크기({roll_window}개월) 대비 lag({roll_lag}개월)이 큰 편이라 "
+                            "자유도 부족으로 결과가 불안정할 수 있습니다. lag를 줄이거나 창을 늘려보세요."
+                        )
+
+                    rolling = _compute_rolling_granger(
+                        series_dict[name_a], series_dict[name_b],
+                        lag=roll_lag, window=roll_window, step=roll_step,
+                    )
+                    if not rolling["windows"]:
+                        st.info(
+                            f"정상화 후 표본 {rolling['n']}개가 롤링 창({roll_window}개월)보다 짧아 "
+                            "롤링윈도우 분석을 수행할 수 없습니다. 창 크기를 줄이거나 더 긴 기간의 데이터가 필요합니다."
+                        )
+                    else:
+                        fig_roll = _rolling_granger_figure(name_a, name_b, rolling, roll_window, roll_step, roll_lag)
+                        st.plotly_chart(fig_roll, use_container_width=True, key=f"roll_chart_{name_a}_{name_b}")
+
+                        # 현재 조합에서 유의 구간 비율을 요약 — "안정적인 신호"인지 가늠하는 참고 지표
+                        valid_ab = [w["a_causes_b"] for w in rolling["windows"] if w["a_causes_b"] is not None]
+                        valid_ba = [w["b_causes_a"] for w in rolling["windows"] if w["b_causes_a"] is not None]
+                        if valid_ab and valid_ba:
+                            sig_ratio_ab = sum(p < 0.05 for p in valid_ab) / len(valid_ab) * 100
+                            sig_ratio_ba = sum(p < 0.05 for p in valid_ba) / len(valid_ba) * 100
+                            st.caption(
+                                f"※ 전체 {len(rolling['windows'])}개 창 중 유의(p<0.05) 비율: "
+                                f"{name_a}→{name_b} {sig_ratio_ab:.0f}% / {name_b}→{name_a} {sig_ratio_ba:.0f}%. "
+                                "이 비율이 극단적으로 높거나(항상 유의) 낮으면(항상 비유의) 국면과 무관한 안정적 "
+                                "관계(또는 무관계)로, 중간 어딘가에서 오르내리면 국면에 따라 달라지는 관계로 해석할 수 있습니다."
+                            )
+                        st.caption(
+                            "⚠ 이동폭을 창 크기보다 훨씬 작게 설정하면 인접한 창끼리 데이터가 상당 부분 겹칩니다. "
+                            "따라서 인접 시점의 p-value가 함께 움직이는 것은 자연스러운 현상이며, 실제로 봐야 할 것은 "
+                            "'전체 구간 중 어느 국면에서 유의/비유의가 몰려 있는가'라는 큰 흐름입니다."
+                        )
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
             st.markdown("**[해설]**")
