@@ -44,6 +44,63 @@ def _compute_pair_correlation(s1: pd.Series, s2: pd.Series):
     }
 
 
+LAG_MONTHS = [0, 3, 6, 12]
+
+
+def _compute_lag_correlations(s_a: pd.Series, s_b: pd.Series, lags=LAG_MONTHS):
+    """
+    a(t-lag) vs b(t) 상관계수를 lag별로 계산.
+    lag>0: a가 b를 lag개월 선행한다고 가정하는 방향.
+    표본이 부족한 lag는 결과에서 corr=None으로 표시.
+    """
+    a_m = s_a.dropna().resample("ME").last()
+    b_m = s_b.dropna().resample("ME").last()
+    results = []
+    for lag in lags:
+        a_shifted = a_m.shift(lag)
+        combined = pd.DataFrame({"a": a_shifted, "b": b_m}).dropna()
+        if len(combined) < 6:
+            results.append({"lag": lag, "corr": None, "n": len(combined)})
+            continue
+        corr, _ = pearsonr(combined["a"], combined["b"])
+        results.append({"lag": lag, "corr": corr, "n": len(combined)})
+    return results
+
+
+def _dynamic_lag_observation(name_a: str, name_b: str, lag_results: list) -> str:
+    """
+    [상관지수] 표의 실제 계산값을 인용해서 동적으로 관찰 문장을 생성.
+    - 동시(0) 대비 절댓값이 0.1 이상 더 강한 lag가 있을 때만 "선행성 시사"로 서술.
+    - 그 외에는 보수적으로 "뚜렷한 시차 패턴 없음, 동시적 관계"로 서술.
+    """
+    valid = {r["lag"]: r["corr"] for r in lag_results if r["corr"] is not None}
+    if 0 not in valid:
+        return "동시(0개월) 기준 상관계수를 계산할 표본이 부족해 시차 패턴을 판단할 수 없습니다."
+
+    base = valid[0]
+    others = {lag: c for lag, c in valid.items() if lag != 0}
+    if not others:
+        return f"동시(0개월) 기준 상관계수는 {base:+.2f}이며, 비교할 시차 데이터가 부족합니다."
+
+    best_lag, best_corr = max(others.items(), key=lambda kv: abs(kv[1]))
+    diff = abs(best_corr) - abs(base)
+
+    lag_label = {3: "3개월", 6: "6개월", 12: "12개월"}.get(best_lag, f"{best_lag}개월")
+
+    if diff >= 0.1:
+        direction = f"'{name_a}'가 '{name_b}'보다 약 {lag_label} 선행"
+        return (
+            f"동시(0개월) 상관계수는 {base:+.2f}인 반면, {lag_label} 시차에서 {best_corr:+.2f}로 "
+            f"더 강하게 나타나, {direction}하는 패턴이 시사됩니다. "
+            f"다만 이는 이번 분석기간의 관찰 결과이며, 통계적으로 확정된 인과관계는 아닙니다."
+        )
+    else:
+        return (
+            f"동시(0개월) 상관계수({base:+.2f})와 시차 상관계수(최대 {best_corr:+.2f}, {lag_label}) 간 "
+            f"차이가 크지 않아, 뚜렷한 선행·후행 패턴 없이 대체로 동시적(coincident)인 관계로 해석됩니다."
+        )
+
+
 def _interpret_strength(corr: float) -> str:
     a = abs(corr)
     if a >= 0.7:
@@ -356,39 +413,51 @@ def main():
                 st.divider()
                 continue
 
-            # 1) 객관적 숫자 분석 (기간 명시)
+            # 1) [분석기간]
             strength = _interpret_strength(result["corr"])
-            sign = "+" if result["corr"] >= 0 else "−"
             st.markdown(
                 f"**[분석기간]** {result['start'].strftime('%Y-%m')} ~ {result['end'].strftime('%Y-%m')} "
-                f"(월간 환산 표본 {result['n']}개) · 상관계수: **{sign}{abs(result['corr']):.2f}** ({strength})"
+                f"(월간 환산 표본 {result['n']}개)"
             )
             st.caption(
                 "※ 월말 기준으로 리샘플링한 값으로 계산됩니다. 상관계수는 두 지표가 같은 기간 동안 "
                 "함께 움직인 정도만을 나타내며, 인과관계를 의미하지 않습니다."
             )
 
-            # 2) 서사 (큐레이션 DB 우선, 없으면 일반 안내)
+            # 2) [상관지수] 4칸 표 (동시/3/6/12개월)
+            lag_results = _compute_lag_correlations(series_dict[name_a], series_dict[name_b])
+            st.markdown("**[상관지수]**")
+            lag_cols = st.columns(len(lag_results))
+            for col, r in zip(lag_cols, lag_results):
+                label = "동시(0)" if r["lag"] == 0 else f"{r['lag']}개월"
+                with col:
+                    if r["corr"] is None:
+                        st.metric(label, "표본부족")
+                    else:
+                        st.metric(label, f"{r['corr']:+.2f}")
+            st.caption(f"※ lag>0은 '{name_a}'가 '{name_b}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
+
+            # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
+            st.markdown("**[해설]**")
+            st.markdown("📊 *이번 분석기간 관찰*")
+            st.write(_dynamic_lag_observation(name_a, name_b, lag_results))
+
             narrative = get_narrative(name_a, name_b)
             if narrative:
+                st.markdown("📚 *학계·전문가 참고 시각*")
                 expected = narrative["expected"]
                 if expected in ("+", "-"):
                     match = (expected == "+" and result["corr"] >= 0) or (expected == "-" and result["corr"] < 0)
                     match_txt = "이론과 방향 일치" if match else "⚠ 이론과 방향 불일치 (관계가 약화·역전됐을 가능성)"
                     expected_txt = "양(+)의 상관" if expected == "+" else "음(−)의 상관"
-                    st.markdown(f"**[설명]** 이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
+                    st.caption(f"이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
                 elif expected == "contrarian":
-                    st.markdown("**[설명]** 이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
-                                 "상관계수 부호보다 극단값(과열/과냉각) 여부를 참고하시는 것이 더 적절합니다.")
+                    st.caption("이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
+                                "상관계수 부호보다 극단값(과열/과냉각) 여부를 참고하시는 것이 더 적절합니다.")
                 else:  # "context"
-                    st.markdown("**[설명]** 국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
+                    st.caption("국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
                 st.write(narrative["text"])
-            else:
-                st.markdown("**[설명]**")
-                st.caption(
-                    "이 조합에 대해 업계에서 널리 인정된 정성적 서사는 별도로 정리되어 있지 않습니다. "
-                    "위 상관계수만으로 인과관계를 단정하지 말고, 다른 지표와 함께 교차 검증하시기 바랍니다."
-                )
+            # 고정 서사가 없으면 이 항목 자체를 생략(근거 없는 즉석 서술 방지)
 
             st.divider()
 
