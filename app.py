@@ -220,16 +220,23 @@ def _compute_rolling_granger(
     return {"n": n, "windows": windows}
 
 
-def _rolling_granger_figure(name_a: str, name_b: str, rolling: dict, window: int, step: int, lag: int) -> go.Figure:
-    """롤링윈도우 그레인저 p-value를 시계열 라인차트로 시각화 (0.05 기준선 포함)."""
+def _rolling_granger_figure(
+    name_a: str, name_b: str, rolling: dict, window: int, step: int, lag: int, show_both: bool = True,
+) -> go.Figure:
+    """
+    롤링윈도우 그레인저 p-value를 시계열 라인차트로 시각화 (0.05 기준선 포함).
+    show_both=False면 name_a→name_b(즉 인자로 넘어온 첫 방향, 보통 '지표→주가')만 표시.
+    """
     ends = [w["end"] for w in rolling["windows"]]
     p_ab = [w["a_causes_b"] for w in rolling["windows"]]
     p_ba = [w["b_causes_a"] for w in rolling["windows"]]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ends, y=p_ab, mode="lines+markers", name=f"{name_a} → {name_b}"))
-    fig.add_trace(go.Scatter(x=ends, y=p_ba, mode="lines+markers", name=f"{name_b} → {name_a}"))
+    if show_both:
+        fig.add_trace(go.Scatter(x=ends, y=p_ba, mode="lines+markers", name=f"{name_b} → {name_a}"))
     fig.add_hline(y=0.05, line_dash="dash", line_color="red", annotation_text="유의수준 0.05")
+    y_values = p_ab + (p_ba if show_both else [])
     fig.update_layout(
         height=320,
         margin=dict(l=10, r=10, t=30, b=10),
@@ -237,11 +244,29 @@ def _rolling_granger_figure(name_a: str, name_b: str, rolling: dict, window: int
         xaxis_title=f"창 크기 {window}개월 / {step}개월씩 이동 / lag={lag}개월 (각 점 = 그 시점까지의 {window}개월 창)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    fig.update_yaxes(range=[0, max(1.0, max([p for p in p_ab + p_ba if p is not None], default=1.0))])
+    fig.update_yaxes(range=[0, max(1.0, max([p for p in y_values if p is not None], default=1.0))])
     return fig
 
 
 def main():
+    # st.caption()은 기본적으로 옅은 회색으로 렌더링되어 설명 문구가 잘 안 보이는 문제가 있어,
+    # 전역 CSS로 진한 색(거의 검정)으로 오버라이드. 여러 스트림릿 버전에서 caption이 렌더링되는
+    # DOM 구조(testid, small 태그 등)가 조금씩 달라질 수 있어 선택자를 여러 개 겹쳐서 안정성 확보.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] p,
+        [data-testid="stCaptionContainer"] span,
+        div[data-testid="stMarkdownContainer"] small,
+        small {
+            color: #1a1a1a !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.header("📊 거시경제 지표 비교")
 
     # ── 기간 선택 ──────────────────────────────────
@@ -569,7 +594,7 @@ def main():
             st.markdown("**[상관지수]**")
 
             cell_style = "padding:3px 14px; text-align:center; border-bottom:1px solid #e6e6e6;"
-            header_style = cell_style + "font-size:0.75rem; color:#666;"
+            header_style = cell_style + "font-size:0.75rem; color:#1a1a1a;"
             value_style = cell_style + "font-size:0.82rem; font-weight:600;"
 
             header_cells = ""
@@ -587,8 +612,12 @@ def main():
             st.markdown(table_html, unsafe_allow_html=True)
             st.caption(f"※ lag>0은 '{lead_name}'가 '{lag_name}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
 
-            # 2-1) [그레인저 인과검정] 양방향(A→B, B→A) × lag(1/3/6/12개월)
-            granger = _compute_granger_causality(series_dict[name_a], series_dict[name_b])
+            # 2-1) [그레인저 인과검정] — 상관지수 표와 동일한 방향 판단(lead_name/lag_name) 재사용.
+            #      한쪽만 주가지수인 경우, '주가 → 지표' 방향은 실무적으로 참고 가치가 낮아(예: 주가를 보고
+            #      원유를 매매하는 경우는 드묾) 생략하고 '지표 → 주가' 방향만 표시. 둘 다 주가이거나 둘 다
+            #      주가가 아니면(방향 판단 불가) 기존처럼 양방향 모두 표시.
+            direction_determinable = a_is_price != b_is_price
+            granger = _compute_granger_causality(series_dict[lead_name], series_dict[lag_name])
             st.markdown("**[그레인저 인과검정]**")
 
             if granger["n"] < 10:
@@ -609,11 +638,14 @@ def main():
                     return cells
 
                 row_label_style = cell_style + "font-size:0.78rem; text-align:left; white-space:nowrap; padding-right:10px;"
+                rows_html = f"<tr><td style='{row_label_style}'>{lead_name} → {lag_name}</td>{_pval_row(granger['a_causes_b'])}</tr>"
+                if not direction_determinable:
+                    rows_html += f"<tr><td style='{row_label_style}'>{lag_name} → {lead_name}</td>{_pval_row(granger['b_causes_a'])}</tr>"
+
                 g_table_html = (
                     f"<table style='border-collapse:collapse; width:auto;'>"
                     f"<tr><td style='{row_label_style}'></td>{g_header}</tr>"
-                    f"<tr><td style='{row_label_style}'>{name_a} → {name_b}</td>{_pval_row(granger['a_causes_b'])}</tr>"
-                    f"<tr><td style='{row_label_style}'>{name_b} → {name_a}</td>{_pval_row(granger['b_causes_a'])}</tr>"
+                    f"{rows_html}"
                     f"</table>"
                 )
                 st.markdown(g_table_html, unsafe_allow_html=True)
@@ -622,6 +654,12 @@ def main():
                     "*p<0.05는 유의수준 5%에서 그레인저 인과 관계(=예측력 기여)가 있다는 뜻이며, "
                     "실제 인과관계를 증명하는 것은 아닙니다."
                 )
+                if direction_determinable:
+                    st.caption(
+                        f"※ '{lead_name} → {lag_name}' 방향만 표시합니다. 반대 방향(주가 → 지표)은 "
+                        "실무적으로 참고할 매매 맥락이 낮아(예: 주가를 보고 원유·통화량을 거래하는 경우는 "
+                        "드묾) 생략했습니다."
+                    )
                 if granger["insufficient"]:
                     st.caption(
                         f"⚠ 표본 {granger['n']}개는 일반적으로 권장되는 최소치({GRANGER_MIN_OBS}개) 미만이라, "
@@ -645,21 +683,21 @@ def main():
                         roll_window = st.slider(
                             "창 크기(개월)", min_value=24, max_value=96,
                             value=ROLLING_WINDOW_DEFAULT, step=6,
-                            key=f"roll_window_{name_a}_{name_b}",
+                            key=f"roll_window_{lead_name}_{lag_name}",
                             help="창이 클수록 결과는 안정적이지만 국면 변화에 둔감해지고, 작을수록 민감하지만 표본부족으로 불안정해질 수 있습니다.",
                         )
                     with rc2:
                         roll_step = st.slider(
                             "이동폭(개월)", min_value=1, max_value=12,
                             value=ROLLING_STEP_DEFAULT, step=1,
-                            key=f"roll_step_{name_a}_{name_b}",
+                            key=f"roll_step_{lead_name}_{lag_name}",
                             help="작을수록 그래프가 촘촘해지지만 인접 창끼리 겹치는 데이터가 많아져 값이 부드럽게(smoothed) 보일 수 있습니다.",
                         )
                     with rc3:
                         roll_lag = st.slider(
                             "lag(개월)", min_value=1, max_value=12,
                             value=ROLLING_LAG_DEFAULT, step=1,
-                            key=f"roll_lag_{name_a}_{name_b}",
+                            key=f"roll_lag_{lead_name}_{lag_name}",
                             help="창 안에서 검정할 시차. 창 크기 대비 너무 크면(경험적으로 창의 1/5 초과) 자유도 부족 우려가 있습니다.",
                         )
 
@@ -670,7 +708,7 @@ def main():
                         )
 
                     rolling = _compute_rolling_granger(
-                        series_dict[name_a], series_dict[name_b],
+                        series_dict[lead_name], series_dict[lag_name],
                         lag=roll_lag, window=roll_window, step=roll_step,
                     )
                     if not rolling["windows"]:
@@ -679,21 +717,27 @@ def main():
                             "롤링윈도우 분석을 수행할 수 없습니다. 창 크기를 줄이거나 더 긴 기간의 데이터가 필요합니다."
                         )
                     else:
-                        fig_roll = _rolling_granger_figure(name_a, name_b, rolling, roll_window, roll_step, roll_lag)
-                        st.plotly_chart(fig_roll, use_container_width=True, key=f"roll_chart_{name_a}_{name_b}")
+                        fig_roll = _rolling_granger_figure(
+                            lead_name, lag_name, rolling, roll_window, roll_step, roll_lag,
+                            show_both=not direction_determinable,
+                        )
+                        st.plotly_chart(fig_roll, use_container_width=True, key=f"roll_chart_{lead_name}_{lag_name}")
 
                         # 현재 조합에서 유의 구간 비율을 요약 — "안정적인 신호"인지 가늠하는 참고 지표
                         valid_ab = [w["a_causes_b"] for w in rolling["windows"] if w["a_causes_b"] is not None]
-                        valid_ba = [w["b_causes_a"] for w in rolling["windows"] if w["b_causes_a"] is not None]
-                        if valid_ab and valid_ba:
+                        if valid_ab:
                             sig_ratio_ab = sum(p < 0.05 for p in valid_ab) / len(valid_ab) * 100
-                            sig_ratio_ba = sum(p < 0.05 for p in valid_ba) / len(valid_ba) * 100
-                            st.caption(
-                                f"※ 전체 {len(rolling['windows'])}개 창 중 유의(p<0.05) 비율: "
-                                f"{name_a}→{name_b} {sig_ratio_ab:.0f}% / {name_b}→{name_a} {sig_ratio_ba:.0f}%. "
-                                "이 비율이 극단적으로 높거나(항상 유의) 낮으면(항상 비유의) 국면과 무관한 안정적 "
+                            summary = f"※ 전체 {len(rolling['windows'])}개 창 중 유의(p<0.05) 비율: {lead_name}→{lag_name} {sig_ratio_ab:.0f}%"
+                            if not direction_determinable:
+                                valid_ba = [w["b_causes_a"] for w in rolling["windows"] if w["b_causes_a"] is not None]
+                                if valid_ba:
+                                    sig_ratio_ba = sum(p < 0.05 for p in valid_ba) / len(valid_ba) * 100
+                                    summary += f" / {lag_name}→{lead_name} {sig_ratio_ba:.0f}%"
+                            summary += (
+                                ". 이 비율이 극단적으로 높거나(항상 유의) 낮으면(항상 비유의) 국면과 무관한 안정적 "
                                 "관계(또는 무관계)로, 중간 어딘가에서 오르내리면 국면에 따라 달라지는 관계로 해석할 수 있습니다."
                             )
+                            st.caption(summary)
                         st.caption(
                             "⚠ 이동폭을 창 크기보다 훨씬 작게 설정하면 인접한 창끼리 데이터가 상당 부분 겹칩니다. "
                             "따라서 인접 시점의 p-value가 함께 움직이는 것은 자연스러운 현상이며, 실제로 봐야 할 것은 "
