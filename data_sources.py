@@ -38,6 +38,8 @@ INDICATORS = {
         "미국 실업률":            {"source": "fred", "code": "UNRATE", "freq": "월간"},
         "미국 산업생산지수":       {"source": "fred", "code": "INDPRO", "freq": "월간"},
         "미국 소비자심리지수":     {"source": "fred", "code": "UMCSENT", "freq": "월간"},
+        "중장비트럭 판매량(선행지표)": {"source": "fred", "code": "HTRUCKSSAAR", "freq": "월간"},
+        "미국 경기침체확률(Chauvet-Piger)": {"source": "fred", "code": "RECPROUSM156N", "freq": "월간"},
     },
 
     "금리·통화": {
@@ -90,6 +92,10 @@ INDICATORS = {
     "밸류에이션(복합지표)": {
         "버핏지수(시총/GDP, %)":  {"source": "buffett_indicator", "code": "ratio", "freq": "분기"},
         "버핏지수 추세이격률(%)": {"source": "buffett_deviation", "code": "pct", "freq": "분기"},
+        "S&P500 추세이격률(%)":  {"source": "trend_deviation", "code": "S&P500", "freq": "일간"},
+        "S&P500 CAPE 추세이격률(%)": {"source": "trend_deviation", "code": "S&P500 CAPE(실러PER)", "freq": "월간"},
+        "나스닥100 추세이격률(%)":   {"source": "trend_deviation", "code": "나스닥100", "freq": "일간"},
+        "코스피 추세이격률(%)":      {"source": "trend_deviation", "code": "코스피", "freq": "일간"},
         "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
         "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
         "S&P500 배당수익률(%)":   {"source": "multpl", "code": "dividend_yield", "freq": "월간"},
@@ -322,29 +328,102 @@ def get_buffett_indicator() -> pd.Series:
     return ratio
 
 
+def compute_trend_deviation_pct(series: pd.Series) -> pd.Series:
+    """
+    범용 '장기추세선 대비 이격률(%)' 계산 함수.
+    - 전체 기간에 로그선형회귀를 적용해 장기추세선을 구하고, 실제값이 그 추세선보다
+      몇 % 위/아래에 있는지를 반환. 양수: 추세선 위(고평가), 음수: 추세선 아래(저평가).
+    - 값이 0 이하인 지표에는 로그를 취할 수 없어 적용 불가.
+    """
+    s = series.dropna()
+    if len(s) < 20:
+        raise ValueError("추세이격률 계산을 위한 표본이 너무 적습니다(최소 20개 필요).")
+    if (s <= 0).any():
+        raise ValueError("0 이하 값이 포함된 지표에는 추세이격률(로그기반)을 적용할 수 없습니다.")
+
+    x = np.arange(len(s))
+    y = np.log(s.values)
+    slope, intercept = np.polyfit(x, y, 1)
+    trend = np.exp(slope * x + intercept)
+
+    deviation_pct = (s.values / trend - 1) * 100
+    return pd.Series(deviation_pct, index=s.index)
+
+
+def summarize_reversion_stats(deviation: pd.Series, tolerance: float = 0.3) -> dict | None:
+    """
+    이격률 시계열에서, '현재와 비슷한 크기(±tolerance 비율 이내)의 이격이 과거에 있었을 때
+    추세선(이격률 0%)까지 되돌아오는 데 걸린 기간'의 통계를 계산.
+    - 회귀 기준: 이격률의 부호가 바뀌는 시점(0%를 다시 통과하는 시점)을 '회귀 완료'로 정의.
+    - 반환: {"current_deviation": 현재이격률, "n_episodes": 유사국면 수,
+             "median_months": 중앙값(개월), "mean_months": 평균(개월),
+             "min_months": 최소, "max_months": 최대} 또는 유사 사례가 없으면 None.
+    """
+    s = deviation.dropna()
+    if len(s) < 10:
+        return None
+
+    current_dev = s.iloc[-1]
+    if current_dev == 0:
+        return None
+    current_sign = 1 if current_dev > 0 else -1
+
+    # 국면(같은 부호가 유지되는 구간) 단위로 분할, 각 국면의 '정점 이격폭'과 '지속 기간' 기록
+    sign_arr = np.sign(s.values)
+    episodes = []
+    seg_start = 0
+    seg_sign = sign_arr[0] if sign_arr[0] != 0 else current_sign
+    seg_peak = s.values[0]
+
+    for i in range(1, len(s)):
+        si = sign_arr[i]
+        if si != 0 and si != seg_sign:
+            episodes.append({
+                "sign": seg_sign,
+                "peak": seg_peak,
+                "start": s.index[seg_start],
+                "end": s.index[i],  # 부호가 바뀐 시점 = 회귀 완료 시점
+            })
+            seg_start = i
+            seg_sign = si
+            seg_peak = s.values[i]
+        else:
+            if seg_sign > 0:
+                seg_peak = max(seg_peak, s.values[i])
+            else:
+                seg_peak = min(seg_peak, s.values[i])
+
+    # 지금 '현재 국면'은 아직 회귀가 안 끝난 상태이므로 통계 대상에서 제외하고,
+    # 과거에 '완료된' 국면들 중 현재와 부호가 같고 정점 크기가 비슷한 사례만 추출
+    similar = [
+        e for e in episodes
+        if e["sign"] == current_sign
+        and abs(e["peak"]) >= abs(current_dev) * (1 - tolerance)
+    ]
+    if not similar:
+        return None
+
+    durations_months = [(e["end"] - e["start"]).days / 30.44 for e in similar]
+    return {
+        "current_deviation": round(float(current_dev), 1),
+        "n_episodes": len(similar),
+        "median_months": round(float(np.median(durations_months)), 1),
+        "mean_months": round(float(np.mean(durations_months)), 1),
+        "min_months": round(float(np.min(durations_months)), 1),
+        "max_months": round(float(np.max(durations_months)), 1),
+    }
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def get_buffett_deviation() -> pd.Series:
     """
-    버핏지수의 '장기추세선 대비 이격률(%)'을 계산.
-    - 전체 기간(1947년~현재) 버핏지수에 로그선형회귀를 적용해 장기추세선을 구하고,
-      실제값이 그 추세선보다 몇 % 위/아래에 있는지를 반환.
-    - 양수: 추세선보다 위(구조적 추세를 넘어선 추가 고평가)
-    - 음수: 추세선보다 아래(구조적 추세 대비 저평가)
+    버핏지수의 '장기추세선 대비 이격률(%)'을 계산 (compute_trend_deviation_pct 적용).
     - 목적: "격차가 벌어질 때 하락, 좁혀질 때 상승"이라는 가설을 이중축 착시 없이
       정량적으로 검증하기 위한 파생지표. S&P500과 나란히 그려서 이격률의 고점·저점이
       실제 주가 반전 시점과 맞아떨어지는지 시각적으로 확인하는 용도.
     """
     s = get_buffett_indicator().dropna()
-    if len(s) < 20:
-        raise ValueError("버핏지수 추세이격률 계산을 위한 표본이 너무 적습니다.")
-
-    x = np.arange(len(s))
-    y = np.log(s.values)
-    slope, intercept = np.polyfit(x, y, 1)  # 전체 기간 기준 장기(로그선형) 추세
-    trend = np.exp(slope * x + intercept)
-
-    deviation_pct = (s.values / trend - 1) * 100
-    out = pd.Series(deviation_pct, index=s.index)
+    out = compute_trend_deviation_pct(s)
     out.name = "buffett_deviation_pct"
     return out
 
@@ -390,6 +469,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         s = get_buffett_deviation()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
+
+    elif source == "trend_deviation":
+        # code: 원본 지표명(INDICATORS에 등록된 이름) — 그 지표의 추세이격률을 계산해서 반환
+        base = get_series(code, start=start)
+        return compute_trend_deviation_pct(base)
 
     elif source == "multpl":
         s = get_multpl_series(mode=code)

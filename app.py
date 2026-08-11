@@ -20,7 +20,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy.stats import pearsonr
 
-from data_sources import list_indicator_names, get_series, normalize, fetch_by_source
+from data_sources import (
+    list_indicator_names, get_series, normalize, fetch_by_source, summarize_reversion_stats,
+)
 from correlation_narratives import get_narrative
 
 st.set_page_config(page_title="거시경제 지표 대시보드", layout="wide")
@@ -73,9 +75,14 @@ def main():
             max_value=pd.to_datetime("today"),
         )
 
-    # ── 지표 선택 (카테고리별 그룹핑된 멀티셀렉트) ──
+    # ── 지표 선택 (카테고리별 격자 + 체크박스, multpl.com 스타일) ──
     grouped = list_indicator_names()
-    all_names = [name for names in grouped.values() for name in names]
+
+    # 화면 표시 순서: 지수·주가를 맨 앞으로
+    CATEGORY_ORDER = ["지수·주가", "미국 거시지표", "금리·통화", "신용·부채", "외환·무역", "원자재", "밸류에이션(복합지표)"]
+    ordered_categories = [c for c in CATEGORY_ORDER if c in grouped] + [c for c in grouped if c not in CATEGORY_ORDER]
+
+    all_names = [name for cat in ordered_categories for name in grouped[cat]]
 
     # ── 사용자가 화면에서 즉석으로 추가한 지표 (세션 한정) ──
     if "custom_indicators" not in st.session_state:
@@ -83,7 +90,7 @@ def main():
 
     with st.expander("➕ 지표 직접 추가 (FRED 코드 / 야후파이낸스 티커)"):
         st.caption(
-            "여기서 추가한 지표는 **이번 접속에서만** 선택 목록에 나타납니다. "
+            "여기서 추가한 지표는 **이번 접속에서만** 아래 격자의 '직접추가지표' 칸에 나타납니다. "
             "계속 쓰실 지표는 개발자(코드 관리자)에게 data_sources.py에 등록을 요청하세요."
         )
         c1, c2, c3 = st.columns([2, 1, 2])
@@ -109,7 +116,7 @@ def main():
                         st.session_state.custom_indicators[custom_display_name] = {
                             "source": custom_source, "code": custom_code,
                         }
-                        st.success(f"'{custom_display_name}' 추가 완료! 아래 선택 목록에서 고르실 수 있습니다.")
+                        st.success(f"'{custom_display_name}' 추가 완료! 아래 격자의 '직접추가지표' 칸에서 고르실 수 있습니다.")
                 except Exception as e:
                     st.error(f"조회 실패: {e}")
 
@@ -122,13 +129,42 @@ def main():
     custom_names = list(st.session_state.custom_indicators.keys())
     all_names_with_custom = all_names + custom_names
 
-    st.caption("카테고리: " + " · ".join(grouped.keys()) + "  (※ 좌우 Y축 각 2개씩, 최대 4개 지표 권장)")
-    selected = st.multiselect(
-        "비교할 지표를 2개 이상 선택하세요 (최대 4개 권장)",
-        options=all_names_with_custom,
-        default=["나스닥100", "하이일드 스프레드(HY OAS, CDS프록시)"],
-        max_selections=4,
-    )
+    # 격자에 표시할 (카테고리명, 지표목록) 순서 — 직접추가지표는 있을 때만 맨 끝에 추가
+    grid_sections = [(cat, grouped[cat]) for cat in ordered_categories]
+    if custom_names:
+        grid_sections.append(("직접추가지표", custom_names))
+
+    MAX_SELECT = 4
+
+    # 체크박스 위젯 상태 초기화(최초 1회, 기본값 나스닥100+하이일드스프레드)
+    DEFAULT_SELECTED = {"나스닥100", "하이일드 스프레드(HY OAS, CDS프록시)"}
+    for name in all_names_with_custom:
+        key = f"chk_{name}"
+        if key not in st.session_state:
+            st.session_state[key] = name in DEFAULT_SELECTED
+
+    # 현재 선택된 개수(위젯 렌더링 전 session_state 기준으로 미리 파악)
+    current_count = sum(1 for name in all_names_with_custom if st.session_state.get(f"chk_{name}", False))
+
+    st.markdown("**비교할 지표를 선택하세요 (최대 4개, 이미 선택된 것은 다시 눌러 해제)**")
+    grid_cols = st.columns(len(grid_sections))
+    for col, (cat, names) in zip(grid_cols, grid_sections):
+        with col:
+            st.markdown(f"**{cat}**")
+            for name in names:
+                key = f"chk_{name}"
+                is_checked = st.session_state.get(key, False)
+                disabled = (not is_checked) and (current_count >= MAX_SELECT)
+                st.checkbox(name, key=key, disabled=disabled)
+
+    # 최종 선택 목록 (전체 지표 순서를 그대로 유지 — 그래프 범례 색상 안정성용)
+    selected = [name for name in all_names_with_custom if st.session_state.get(f"chk_{name}", False)]
+
+    if len(selected) > MAX_SELECT:
+        st.warning(f"최대 {MAX_SELECT}개까지만 반영됩니다. 앞의 {MAX_SELECT}개만 사용합니다.")
+        selected = selected[:MAX_SELECT]
+    elif len(selected) < 2:
+        st.info("비교하려면 2개 이상 선택해주세요.")
 
     # ── 정규화 / 로그스케일 옵션 ──────────────────────
     col_opt1, col_opt2 = st.columns(2)
@@ -281,6 +317,29 @@ def main():
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── 추세이격률 회귀 통계 (선택된 지표 중 '추세이격률' 계열이 있으면 표시) ──
+    deviation_names = [n for n in names if "추세이격률" in n]
+    if deviation_names:
+        st.markdown("#### 🔄 추세선 회귀 통계 (참고용)")
+        st.caption(
+            "※ 이격률이 다시 0%(추세선)로 돌아온 과거 사례들을 찾아, 그때 걸린 기간을 집계한 것입니다. "
+            "정확한 타이밍 예측이 아니라, 장기투자자가 '지금이 역사적으로 흔치 않은 이격 수준인지' "
+            "참고하는 용도로만 활용하시기 바랍니다."
+        )
+        for name in deviation_names:
+            stats = summarize_reversion_stats(series_dict[name])
+            if stats is None:
+                st.info(f"'{name}': 현재와 비슷한 크기의 과거 이격 사례를 찾지 못했습니다(표본 부족 또는 역사상 이례적인 수준).")
+                continue
+            direction = "위(고평가 쪽)" if stats["current_deviation"] > 0 else "아래(저평가 쪽)"
+            st.markdown(
+                f"**{name}**: 현재 이격률 **{stats['current_deviation']:+.1f}%**(추세선 {direction}). "
+                f"과거 비슷한 크기의 이격 사례 **{stats['n_episodes']}건** 중, "
+                f"추세선까지 되돌아오는 데 평균 **{stats['mean_months']:.0f}개월**(중앙값 {stats['median_months']:.0f}개월, "
+                f"최소 {stats['min_months']:.0f}~최대 {stats['max_months']:.0f}개월) 걸렸습니다."
+            )
+        st.divider()
 
     # ── 지수간 상관관계 (숫자 분석 → 서사 순) ──────────
     st.subheader("📈 지수간 상관관계")
