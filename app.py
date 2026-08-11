@@ -425,7 +425,18 @@ def main():
             )
 
             # 2) [상관지수] 4칸 표 (동시/3/6/12개월) — 소제목보다 작은 폰트, 좁은 폭
-            lag_results = _compute_lag_correlations(series_dict[name_a], series_dict[name_b])
+            #    lag>0의 의미: '거시지표(원인) → 주가(결과)' 방향으로 해석되도록,
+            #    두 지표 중 하나가 주가지수라면 그 지표를 항상 '결과(후행)' 자리에 고정한다.
+            #    (name_a/name_b는 화면상 나열 순서를 따를 뿐이라, 그대로 쓰면 방향이 뒤집힐 수 있음)
+            PRICE_INDICES = {"S&P500", "나스닥100", "다우존스", "코스피", "코스닥", "니케이225(일본)"}
+            a_is_price = name_a in PRICE_INDICES
+            b_is_price = name_b in PRICE_INDICES
+            if a_is_price and not b_is_price:
+                lead_name, lag_name = name_b, name_a  # 주가가 아닌 쪽(name_b)을 선행 가정
+            else:
+                lead_name, lag_name = name_a, name_b  # 판단 불가(둘 다 주가이거나 둘 다 아님) → 원래 순서 유지
+
+            lag_results = _compute_lag_correlations(series_dict[lead_name], series_dict[lag_name])
             st.markdown("**[상관지수]**")
 
             cell_style = "padding:3px 14px; text-align:center; border-bottom:1px solid #e6e6e6;"
@@ -445,12 +456,12 @@ def main():
                 f"<tr>{header_cells}</tr><tr>{value_cells}</tr></table>"
             )
             st.markdown(table_html, unsafe_allow_html=True)
-            st.caption(f"※ lag>0은 '{name_a}'가 '{name_b}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
+            st.caption(f"※ lag>0은 '{lead_name}'가 '{lag_name}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
             st.markdown("**[해설]**")
             st.markdown("📊 *이번 분석기간 관찰*")
-            st.write(_dynamic_lag_observation(name_a, name_b, lag_results))
+            st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results))
 
             narrative = get_narrative(name_a, name_b)
             if narrative:
