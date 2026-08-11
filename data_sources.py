@@ -95,6 +95,9 @@ INDICATORS = {
         "S&P500 추세이격률(%)":  {"source": "trend_deviation", "code": "S&P500", "freq": "일간"},
         "S&P500 CAPE 추세이격률(%)": {"source": "trend_deviation", "code": "S&P500 CAPE(실러PER)", "freq": "월간"},
         "나스닥100 추세이격률(%)":   {"source": "trend_deviation", "code": "나스닥100", "freq": "일간"},
+        "S&P500 월간수익률(%)":      {"source": "monthly_return", "code": "S&P500", "freq": "월간"},
+        "나스닥100 월간수익률(%)":    {"source": "monthly_return", "code": "나스닥100", "freq": "월간"},
+        "코스피 월간수익률(%)":       {"source": "monthly_return", "code": "코스피", "freq": "월간"},
         "코스피 추세이격률(%)":      {"source": "trend_deviation", "code": "코스피", "freq": "일간"},
         "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
         "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
@@ -474,6 +477,16 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         # code: 원본 지표명(INDICATORS에 등록된 이름) — 그 지표의 추세이격률을 계산해서 반환
         base = get_series(code, start=start)
         return compute_trend_deviation_pct(base)
+
+    elif source == "monthly_return":
+        # code: 원본 지표명(INDICATORS에 등록된 이름) — 그 지표의 '전월대비 변화율(%)'을 반환.
+        # 목적: GDP성장률처럼 이미 '변화율(정체형)'인 지표와 비교할 때, 가격(추세형) 대신
+        # 이 지표를 짝지어야 허위상관(추세혼입) 문제를 피할 수 있음.
+        base = get_series(code, start=start).dropna()
+        monthly = base.resample("ME").last()
+        pct = monthly.pct_change().dropna() * 100
+        pct.name = f"{code}_monthly_return_pct"
+        return pct
 
     elif source == "multpl":
         s = get_multpl_series(mode=code)
