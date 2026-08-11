@@ -112,7 +112,51 @@ def _interpret_strength(corr: float) -> str:
     return "거의 상관 없음"
 
 
+def _note(text: str):
+    """
+    st.caption() 대체 함수. st.caption은 스트림릿 버전에 따라 내부 DOM/클래스 구조가 달라
+    CSS로 색상을 덮어쓰기 불안정한 경우가 있어, 직접 스타일이 적용된 HTML로 렌더링해
+    항상 완전한 검정(#000000)으로 보이도록 함.
+    """
+    st.markdown(
+        f"<div style='color:#000000; font-size:0.875rem; line-height:1.55; margin:2px 0 8px 0;'>{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def main():
+    # 위젯 라벨/일반 텍스트를 포함해 화면 전체 글자색을 완전한 검정(#000000)으로 통일.
+    # - 버튼 내부 글자(흰 글씨 위 배경 등 대비가 필요한 요소)와 링크(클릭 가능함을 표시하는 파란색)는
+    #   가독성을 위해 예외로 남겨둠.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAppViewContainer"] p,
+        [data-testid="stAppViewContainer"] span,
+        [data-testid="stAppViewContainer"] div,
+        [data-testid="stAppViewContainer"] label,
+        [data-testid="stAppViewContainer"] li,
+        [data-testid="stAppViewContainer"] small,
+        [data-testid="stAppViewContainer"] h1,
+        [data-testid="stAppViewContainer"] h2,
+        [data-testid="stAppViewContainer"] h3,
+        [data-testid="stAppViewContainer"] h4,
+        [data-testid="stAppViewContainer"] td,
+        [data-testid="stAppViewContainer"] th {
+            color: #000000 !important;
+        }
+        [data-testid="stAppViewContainer"] button,
+        [data-testid="stAppViewContainer"] button * {
+            color: unset !important;
+        }
+        [data-testid="stAppViewContainer"] a {
+            color: #1a73e8 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.header("📊 거시경제 지표 비교")
 
     # ── 기간 선택 ──────────────────────────────────
@@ -146,7 +190,7 @@ def main():
         st.session_state.custom_indicators = {}  # {표시이름: {"source":..., "code":...}}
 
     with st.expander("➕ 지표 직접 추가 (FRED 코드 / 야후파이낸스 티커)"):
-        st.caption(
+        _note(
             "여기서 추가한 지표는 **이번 접속에서만** 아래 격자의 '직접추가지표' 칸에 나타납니다. "
             "계속 쓰실 지표는 개발자(코드 관리자)에게 data_sources.py에 등록을 요청하세요."
         )
@@ -178,7 +222,7 @@ def main():
                     st.error(f"조회 실패: {e}")
 
         if st.session_state.custom_indicators:
-            st.caption("현재 세션에 추가된 지표: " + ", ".join(st.session_state.custom_indicators.keys()))
+            _note("현재 세션에 추가된 지표: " + ", ".join(st.session_state.custom_indicators.keys()))
             if st.button("추가 지표 전체 삭제"):
                 st.session_state.custom_indicators = {}
                 st.rerun()
@@ -356,7 +400,7 @@ def main():
         )
 
         if log_skipped:
-            st.caption(f"⚠ 0 이하 값이 포함되어 로그스케일 미적용: {', '.join(log_skipped)}")
+            _note(f"⚠ 0 이하 값이 포함되어 로그스케일 미적용: {', '.join(log_skipped)}")
 
     # 범례: 그래프 오른쪽 바로 옆(불필요한 여백 없이)에 세로로 배치
     legend_x = right_domain + (0.14 if n >= 3 else 0.06)
@@ -379,7 +423,7 @@ def main():
     deviation_names = [n for n in names if "추세이격률" in n]
     if deviation_names:
         st.markdown("#### 🔄 추세선 회귀 통계 (참고용)")
-        st.caption(
+        _note(
             "※ 이격률이 다시 0%(추세선)로 돌아온 과거 사례들을 찾아, 그때 걸린 기간을 집계한 것입니다. "
             "정확한 타이밍 예측이 아니라, 장기투자자가 '지금이 역사적으로 흔치 않은 이격 수준인지' "
             "참고하는 용도로만 활용하시기 바랍니다."
@@ -402,7 +446,7 @@ def main():
     st.subheader("📈 지수간 상관관계")
 
     if n < 2:
-        st.caption("지표를 2개 이상 선택하면 상관관계 분석이 표시됩니다.")
+        _note("지표를 2개 이상 선택하면 상관관계 분석이 표시됩니다.")
     else:
         for name_a, name_b in itertools.combinations(names, 2):
             st.markdown(f"#### {name_a}  ×  {name_b}")
@@ -419,7 +463,7 @@ def main():
                 f"**[분석기간]** {result['start'].strftime('%Y-%m')} ~ {result['end'].strftime('%Y-%m')} "
                 f"(월간 환산 표본 {result['n']}개)"
             )
-            st.caption(
+            _note(
                 "※ 월말 기준으로 리샘플링한 값으로 계산됩니다. 상관계수는 두 지표가 같은 기간 동안 "
                 "함께 움직인 정도만을 나타내며, 인과관계를 의미하지 않습니다."
             )
@@ -440,7 +484,7 @@ def main():
             st.markdown("**[상관지수]**")
 
             cell_style = "padding:3px 14px; text-align:center; border-bottom:1px solid #e6e6e6;"
-            header_style = cell_style + "font-size:0.75rem; color:#666;"
+            header_style = cell_style + "font-size:0.75rem; color:#000000;"
             value_style = cell_style + "font-size:0.82rem; font-weight:600;"
 
             header_cells = ""
@@ -456,7 +500,7 @@ def main():
                 f"<tr>{header_cells}</tr><tr>{value_cells}</tr></table>"
             )
             st.markdown(table_html, unsafe_allow_html=True)
-            st.caption(f"※ lag>0은 '{lead_name}'가 '{lag_name}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
+            _note(f"※ lag>0은 '{lead_name}'가 '{lag_name}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
             st.markdown("**[해설]**")
@@ -471,12 +515,12 @@ def main():
                     match = (expected == "+" and result["corr"] >= 0) or (expected == "-" and result["corr"] < 0)
                     match_txt = "이론과 방향 일치" if match else "⚠ 이론과 방향 불일치 (관계가 약화·역전됐을 가능성)"
                     expected_txt = "양(+)의 상관" if expected == "+" else "음(−)의 상관"
-                    st.caption(f"이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
+                    _note(f"이론적으로는 {expected_txt} 관계로 알려져 있습니다 ({match_txt}).")
                 elif expected == "contrarian":
-                    st.caption("이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
+                    _note("이 지표는 선형 상관보다 **역발상(contrarian) 신호**로 해석되는 지표입니다. "
                                 "상관계수 부호보다 극단값(과열/과냉각) 여부를 참고하시는 것이 더 적절합니다.")
                 else:  # "context"
-                    st.caption("국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
+                    _note("국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
                 st.write(narrative["text"])
             # 고정 서사가 없으면 이 항목 자체를 생략(근거 없는 즉석 서술 방지)
 
@@ -484,7 +528,7 @@ def main():
 
     # ── 원본 데이터 테이블 (선택적 확인용) ──
     with st.expander("원본 데이터 보기"):
-        st.caption(
+        _note(
             "※ 지표마다 발표 주기가 다릅니다(예: 일간 지수 vs 월간 마진부채). "
             "일간 기준으로 보면 월간 지표는 발표일에만 값이 채워지고 나머지는 빈 값으로 보이는 게 정상입니다."
         )
