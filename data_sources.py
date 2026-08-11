@@ -44,8 +44,7 @@ INDICATORS = {
 
     "금리·통화": {
         "미국 기준금리(FFR, 실효금리)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
-        "미국 기준금리(목표상단)":          {"source": "fred", "code": "DFEDTARU", "freq": "일간"},
-        "미국 기준금리(목표하단)":          {"source": "fred", "code": "DFEDTARL", "freq": "일간"},
+        "미국 기준금리(목표, 계단식)":      {"source": "fed_target_combined", "code": "target", "freq": "일간"},
         "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
         "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
         "미국 10년 국채금리":     {"source": "fred", "code": "DGS10", "freq": "일간"},
@@ -431,6 +430,36 @@ def get_buffett_deviation() -> pd.Series:
     return out
 
 
+FED_TARGET_SPLICE_DATE = pd.Timestamp("2008-12-16")  # 연준이 단일목표→범위(상단/하단) 방식으로 전환한 날짜
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_fed_target_rate_combined() -> pd.Series:
+    """
+    미국 기준금리(목표, 계단식)를 전체 기간 하나로 이어붙여서 반환.
+    - 2008년 12월 16일 이전: 연준이 '단일 숫자'로 목표금리를 발표하던 시기 (FRED: DFEDTAR)
+    - 2008년 12월 16일 이후: 금융위기로 금리가 0%대까지 내려가며 '범위(상단/하단)'로
+      발표 방식이 바뀜 (FRED: DFEDTARU/DFEDTARL). 여기서는 통상 시장에서 대표값으로
+      인용되는 상단(DFEDTARU)을 사용해 이어붙임.
+    - 목적: 상단/하단을 따로 두면 2008년 이전 구간은 데이터 자체가 없어 혼란을 주므로,
+      전체 역사를 하나의 깔끔한 계단식 그래프로 볼 수 있게 통합.
+    """
+    old = fred.get_series("DFEDTAR", observation_start="1982-01-01")
+    old.index = pd.to_datetime(old.index)
+    old = old.dropna()
+    old = old[old.index < FED_TARGET_SPLICE_DATE]
+
+    new = fred.get_series("DFEDTARU", observation_start="2008-01-01")
+    new.index = pd.to_datetime(new.index)
+    new = new.dropna()
+    new = new[new.index >= FED_TARGET_SPLICE_DATE]
+
+    combined = pd.concat([old, new]).sort_index()
+    combined = combined[~combined.index.duplicated(keep="last")]
+    combined.name = "fed_target_rate_combined"
+    return combined
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
     """
@@ -470,6 +499,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "buffett_deviation":
         s = get_buffett_deviation()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "fed_target_combined":
+        s = get_fed_target_rate_combined()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
