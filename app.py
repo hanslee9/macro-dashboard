@@ -15,10 +15,13 @@ requirements.txt:
 """
 
 import itertools
+import warnings
+import numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from scipy.stats import pearsonr
+from statsmodels.tsa.stattools import grangercausalitytests
 
 from data_sources import (
     list_indicator_names, get_series, normalize, fetch_by_source, summarize_reversion_stats,
@@ -110,6 +113,66 @@ def _interpret_strength(corr: float) -> str:
     elif a >= 0.2:
         return "약한 상관"
     return "거의 상관 없음"
+
+
+GRANGER_LAGS = [1, 3, 6, 12]
+GRANGER_MIN_OBS = 50  # 표본당 최소 권장 관측치 (일반적 가이드라인)
+
+
+def _prepare_stationary_series(s: pd.Series) -> pd.Series:
+    """
+    월간으로 리샘플링 후 1차 차분해 정상성(stationarity)을 확보.
+    - 양수만 있는 지표는 로그차분(=근사 변화율), 그 외에는 단순차분.
+    - 그레인저 검정은 정상 시계열을 가정하므로, 추세가 있는 원본 레벨값을
+      그대로 넣으면 허위 유의성(spurious significance)이 나올 위험이 큼.
+    """
+    s_m = s.dropna().resample("ME").last()
+    if len(s_m) == 0:
+        return s_m
+    if (s_m > 0).all():
+        return np.log(s_m).diff().dropna()
+    return s_m.diff().dropna()
+
+
+def _compute_granger_causality(s_a: pd.Series, s_b: pd.Series, lags=GRANGER_LAGS, min_obs=GRANGER_MIN_OBS):
+    """
+    양방향 그레인저 인과검정: A→B, B→A를 lag별로 계산.
+    - 두 시계열을 월간 차분(정상화)한 뒤 공통 구간으로 정렬.
+    - lag별 p-value만 반환 (p<0.05 여부로 판단, "정확한 시차 특정"은 지표 자기상관 때문에
+      어려우므로 여러 lag를 병렬 표시하는 방식을 취함).
+    - 표본 대비 lag가 과도하면(자유도 부족 우려, 경험적으로 lag*5 > n) 해당 lag는 계산하지 않고 None 처리.
+    반환: {
+        "n": 정상화 후 공통 표본 수,
+        "insufficient": 최소 권장 표본(min_obs) 미달 여부,
+        "a_causes_b": {lag: p-value or None, ...},
+        "b_causes_a": {lag: p-value or None, ...},
+    }
+    """
+    a_d = _prepare_stationary_series(s_a)
+    b_d = _prepare_stationary_series(s_b)
+    combined = pd.DataFrame({"a": a_d, "b": b_d}).dropna()
+    n = len(combined)
+
+    result = {"n": n, "insufficient": n < min_obs, "a_causes_b": {}, "b_causes_a": {}}
+
+    for lag in lags:
+        if n < 3 * lag + 10:  # 자유도 확보를 위한 경험적 최소 표본 규칙
+            result["a_causes_b"][lag] = None
+            result["b_causes_a"][lag] = None
+            continue
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # grangercausalitytests는 [종속변수, 설명변수] 순서 컬럼을 받음
+                gc_a_to_b = grangercausalitytests(combined[["b", "a"]], maxlag=lag, verbose=False)
+                gc_b_to_a = grangercausalitytests(combined[["a", "b"]], maxlag=lag, verbose=False)
+            result["a_causes_b"][lag] = gc_a_to_b[lag][0]["ssr_ftest"][1]
+            result["b_causes_a"][lag] = gc_b_to_a[lag][0]["ssr_ftest"][1]
+        except Exception:
+            result["a_causes_b"][lag] = None
+            result["b_causes_a"][lag] = None
+
+    return result
 
 
 def main():
@@ -457,6 +520,51 @@ def main():
             )
             st.markdown(table_html, unsafe_allow_html=True)
             st.caption(f"※ lag>0은 '{lead_name}'가 '{lag_name}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
+
+            # 2-1) [그레인저 인과검정] 양방향(A→B, B→A) × lag(1/3/6/12개월)
+            granger = _compute_granger_causality(series_dict[name_a], series_dict[name_b])
+            st.markdown("**[그레인저 인과검정]**")
+
+            if granger["n"] < 10:
+                st.info("정상화(월간 차분) 후 공통 표본이 너무 적어 그레인저 인과검정을 수행할 수 없습니다.")
+            else:
+                g_header = "".join(f"<td style='{header_style}'>{lag}개월</td>" for lag in GRANGER_LAGS)
+
+                def _pval_row(pvals: dict) -> str:
+                    cells = ""
+                    for lag in GRANGER_LAGS:
+                        p = pvals.get(lag)
+                        if p is None:
+                            cells += f"<td style='{value_style}'>표본부족</td>"
+                        else:
+                            sig = " color:#c0392b;" if p < 0.05 else ""
+                            mark = " *" if p < 0.05 else ""
+                            cells += f"<td style='{value_style}{sig}'>{p:.3f}{mark}</td>"
+                    return cells
+
+                row_label_style = cell_style + "font-size:0.78rem; text-align:left; white-space:nowrap; padding-right:10px;"
+                g_table_html = (
+                    f"<table style='border-collapse:collapse; width:auto;'>"
+                    f"<tr><td style='{row_label_style}'></td>{g_header}</tr>"
+                    f"<tr><td style='{row_label_style}'>{name_a} → {name_b}</td>{_pval_row(granger['a_causes_b'])}</tr>"
+                    f"<tr><td style='{row_label_style}'>{name_b} → {name_a}</td>{_pval_row(granger['b_causes_a'])}</tr>"
+                    f"</table>"
+                )
+                st.markdown(g_table_html, unsafe_allow_html=True)
+                st.caption(
+                    f"※ 표시값은 p-value (월간 차분 기준 정상화 후 표본 {granger['n']}개). "
+                    "*p<0.05는 유의수준 5%에서 그레인저 인과 관계(=예측력 기여)가 있다는 뜻이며, "
+                    "실제 인과관계를 증명하는 것은 아닙니다."
+                )
+                if granger["insufficient"]:
+                    st.caption(
+                        f"⚠ 표본 {granger['n']}개는 일반적으로 권장되는 최소치({GRANGER_MIN_OBS}개) 미만이라, "
+                        "특히 긴 lag(6·12개월)의 결과는 참고용으로만 활용하시기 바랍니다."
+                    )
+                st.caption(
+                    "⚠ 지표 자체의 자기상관(autocorrelation) 때문에 '정확한 시차'를 하나로 특정하기는 어렵습니다. "
+                    "여러 lag에서 p<0.05가 반복적으로 나타나는지를 함께 보는 것을 권장합니다."
+                )
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
             st.markdown("**[해설]**")
