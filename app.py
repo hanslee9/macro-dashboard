@@ -424,17 +424,27 @@ def main():
                 "함께 움직인 정도만을 나타내며, 인과관계를 의미하지 않습니다."
             )
 
-            # 2) [상관지수] 4칸 표 (동시/3/6/12개월)
+            # 2) [상관지수] 4칸 표 (동시/3/6/12개월) — 소제목보다 작은 폰트, 좁은 폭
             lag_results = _compute_lag_correlations(series_dict[name_a], series_dict[name_b])
             st.markdown("**[상관지수]**")
-            lag_cols = st.columns(len(lag_results))
-            for col, r in zip(lag_cols, lag_results):
+
+            cell_style = "padding:3px 14px; text-align:center; border-bottom:1px solid #e6e6e6;"
+            header_style = cell_style + "font-size:0.75rem; color:#666;"
+            value_style = cell_style + "font-size:0.82rem; font-weight:600;"
+
+            header_cells = ""
+            value_cells = ""
+            for r in lag_results:
                 label = "동시(0)" if r["lag"] == 0 else f"{r['lag']}개월"
-                with col:
-                    if r["corr"] is None:
-                        st.metric(label, "표본부족")
-                    else:
-                        st.metric(label, f"{r['corr']:+.2f}")
+                value_text = "표본부족" if r["corr"] is None else f"{r['corr']:+.2f}"
+                header_cells += f"<td style='{header_style}'>{label}</td>"
+                value_cells += f"<td style='{value_style}'>{value_text}</td>"
+
+            table_html = (
+                f"<table style='border-collapse:collapse; width:auto;'>"
+                f"<tr>{header_cells}</tr><tr>{value_cells}</tr></table>"
+            )
+            st.markdown(table_html, unsafe_allow_html=True)
             st.caption(f"※ lag>0은 '{name_a}'가 '{name_b}'를 그만큼 선행한다고 가정했을 때의 상관계수입니다.")
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
