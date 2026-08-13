@@ -24,6 +24,7 @@ from data_sources import (
     list_indicator_names, get_series, normalize, fetch_by_source, summarize_reversion_stats,
 )
 from correlation_narratives import get_narrative
+from indicator_descriptions import get_description as get_indicator_description
 
 st.set_page_config(page_title="거시경제 지표 대시보드", layout="wide")
 
@@ -546,6 +547,13 @@ def main():
                     "더 이상 조회되지 않아, 상관계수 역시 최근 3년 구간 위주로 계산된 결과입니다."
                 )
 
+            if name_a == "S&P500 PEG비율(트레일링 근사)" or name_b == "S&P500 PEG비율(트레일링 근사)":
+                _note(
+                    "⚠ 'PEG비율'은 원래 애널리스트의 향후 이익성장률 **전망치**를 쓰지만, 이 전망치는 무료 "
+                    "공개 소스가 없어 여기서는 **과거(trailing) EPS 성장률**로 근사한 대체 지표입니다. "
+                    "미래 기대가 아닌 과거 실적 기준이라 실제 PEG보다 후행적으로 움직일 수 있습니다."
+                )
+
             st.markdown("📊 *이번 분석기간 관찰*")
             st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results, n_sample=result["n"]))
 
@@ -565,6 +573,18 @@ def main():
                     _note("국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
                 st.write(narrative["text"])
             # 고정 서사가 없으면 이 항목 자체를 생략(근거 없는 즉석 서술 방지)
+
+            # 4) [지표 설명] — 비교 대상 두 지표 각각의 고정 설명(엑셀 기반 DB)
+            desc_shown = False
+            for nm in (name_a, name_b):
+                desc = get_indicator_description(nm)
+                if desc:
+                    if not desc_shown:
+                        st.markdown("📖 *지표 설명*")
+                        desc_shown = True
+                    st.markdown(f"**{nm}** — {desc['easy']}")
+                    st.write(desc["detail"])
+                    _note(f"📈 상승 시: {desc['up']}  ·  📉 하락 시: {desc['down']}")
 
             st.divider()
 

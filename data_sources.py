@@ -115,6 +115,7 @@ INDICATORS = {
         "S&P500 이익수익률(%)":   {"source": "multpl", "code": "earnings_yield", "freq": "월간"},
         "S&P500 PBR(주가순자산)": {"source": "multpl", "code": "price_to_book", "freq": "월간"},
         "S&P500 PSR(주가매출)":   {"source": "multpl", "code": "price_to_sales", "freq": "월간"},
+        "S&P500 PEG비율(트레일링 근사)": {"source": "peg", "code": "peg", "freq": "월간"},  # 향후이익성장률 대신 과거EPS성장률 기준 근사치
     },
 }
 
@@ -258,6 +259,40 @@ def get_multpl_series(mode: str) -> pd.Series:
 
     s.name = f"shiller_{mode}"
     return s
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def get_peg_ratio() -> pd.Series:
+    """
+    S&P500 PEG비율(트레일링 근사치) = 일반PER ÷ (최근 12개월 EPS 전년동월대비 성장률, %)
+
+    정통 PEG 비율은 애널리스트의 '향후' 이익성장률 전망치를 분모로 쓰지만, 이런 예측치는
+    무료로 자동 수집할 수 있는 공개 API가 없다(Yardeni, GuruFocus 등 유료 소스만 존재).
+    대신 이미 보유한 데이터(multpl PER + S&P500 가격)에서 EPS를 역산해, '과거(trailing)
+    이익성장률' 기준으로 근사한 대체 지표를 제공한다. 전망치 기반 PEG보다 후행적이라는
+    한계가 있으니 화면에 caveat로 안내할 것.
+    """
+    pe = get_multpl_series(mode="pe")  # 월별, S&P500 가격 ÷ EPS
+    price_df = yf.download("^GSPC", start="1990-01-01", progress=False)
+    if price_df.empty:
+        raise ValueError("PEG 계산을 위한 S&P500 가격 데이터를 가져오지 못했습니다.")
+    price = price_df["Close"]
+    if isinstance(price, pd.DataFrame):
+        price = price.iloc[:, 0]
+    price.index = pd.to_datetime(price.index)
+
+    pe_m = pe.resample("ME").last()
+    price_m = price.resample("ME").last()
+
+    combined = pd.DataFrame({"pe": pe_m, "price": price_m}).dropna()
+    eps = combined["price"] / combined["pe"]  # EPS 역산
+    eps_growth_pct = eps.pct_change(12) * 100  # 전년동월대비 EPS 성장률(%)
+
+    peg = combined["pe"] / eps_growth_pct
+    peg = peg[eps_growth_pct > 0]  # 이익 역성장(마이너스) 구간은 PEG 정의상 의미 없어 제외
+    peg = peg.dropna()
+    peg.name = "sp500_peg_trailing"
+    return peg
 
 
 
@@ -592,6 +627,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "us_market_cap":
         s = get_us_market_cap()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "peg":
+        s = get_peg_ratio()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
