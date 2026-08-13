@@ -438,6 +438,19 @@ def main():
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── 지표 설명 (선택 개수와 무관하게 항상 표시) ──
+    any_desc = any(get_indicator_description(name) for name in names)
+    if any_desc:
+        st.markdown("#### 📖 지표 설명")
+        for name in names:
+            desc = get_indicator_description(name)
+            if not desc:
+                continue
+            st.markdown(f"**{name}** — {desc['easy']}")
+            st.write(desc["detail"])
+            _note(f"📈 상승 시: {desc['up']}  ·  📉 하락 시: {desc['down']}")
+        st.divider()
+
     # ── 추세이격률 회귀 통계 (선택된 지표 중 '추세이격률' 계열이 있으면 표시) ──
     deviation_names = [n for n in names if "추세이격률" in n]
     if deviation_names:
@@ -573,18 +586,6 @@ def main():
                     _note("국면에 따라 관계의 방향이 달라질 수 있는 지표 조합입니다.")
                 st.write(narrative["text"])
             # 고정 서사가 없으면 이 항목 자체를 생략(근거 없는 즉석 서술 방지)
-
-            # 4) [지표 설명] — 비교 대상 두 지표 각각의 고정 설명(엑셀 기반 DB)
-            desc_shown = False
-            for nm in (name_a, name_b):
-                desc = get_indicator_description(nm)
-                if desc:
-                    if not desc_shown:
-                        st.markdown("📖 *지표 설명*")
-                        desc_shown = True
-                    st.markdown(f"**{nm}** — {desc['easy']}")
-                    st.write(desc["detail"])
-                    _note(f"📈 상승 시: {desc['up']}  ·  📉 하락 시: {desc['down']}")
 
             st.divider()
 
