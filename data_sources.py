@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 from fredapi import Fred
 import yfinance as yf
+from dbnomics import fetch_series as _dbnomics_fetch_series
 
 # ──────────────────────────────────────────────────────────
 # FRED 클라이언트
@@ -40,6 +41,14 @@ INDICATORS = {
         "미국 소비자심리지수":     {"source": "fred", "code": "UMCSENT", "freq": "월간"},
         "중장비트럭 판매량(선행지표)": {"source": "fred", "code": "HTRUCKSSAAR", "freq": "월간"},
         "미국 경기침체확률(Chauvet-Piger)": {"source": "fred", "code": "RECPROUSM156N", "freq": "월간"},
+        "신규 실업급여 신청 건수":  {"source": "fred", "code": "ICSA", "freq": "주간"},
+        "소매 매출액":             {"source": "fred", "code": "RSAFS", "freq": "월간"},
+        "개인소득":                {"source": "fred", "code": "PI", "freq": "월간"},
+        "개인소비지출(PCE)":        {"source": "fred", "code": "PCE", "freq": "월간"},
+        "내구재 수주":             {"source": "fred", "code": "DGORDER", "freq": "월간"},
+        "ISM 제조업 PMI":         {"source": "dbnomics", "code": "ISM/pmi/pm", "freq": "월간"},  # 무료 대안소스(DBnomics), 데이터 정합성 검증 필요
+        "신규 주택허가 건수":       {"source": "fred", "code": "PERMIT", "freq": "월간"},
+        "OECD 경기선행지수(미국, CLI)": {"source": "fred", "code": "USALOLITONOSTSAM", "freq": "월간"},
     },
 
     "금리·통화": {
@@ -86,6 +95,7 @@ INDICATORS = {
         "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
         "금 선물":                {"source": "yfinance", "code": "GC=F", "freq": "일간"},
         "은 선물":                {"source": "yfinance", "code": "SI=F", "freq": "일간"},
+        "발틱운임지수(BDI) 프록시-해운ETF": {"source": "yfinance", "code": "SEA", "freq": "일간"},  # BDI 자체는 유료(Baltic Exchange)라 해운 ETF로 근사 대체
     },
 
     "밸류에이션(복합지표)": {
@@ -460,6 +470,29 @@ def get_fed_target_rate_combined() -> pd.Series:
     return combined
 
 
+# ──────────────────────────────────────────────────────────
+# DBnomics (ISM 제조업 PMI 무료 대안소스)
+# ISM 공식 데이터는 유료 구독제이고, FRED의 구 코드(NAPM)는 2016년 이후 갱신 중단됨.
+# DBnomics가 ISM 원자료를 무료로 재배포하고 있어 이를 사용하되, 공식 소스가 아니므로
+# 값이 비정상적으로 튀는 구간이 있을 수 있어 화면에서 데이터를 반드시 확인할 것.
+# ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _load_dbnomics_series(series_id: str) -> pd.Series:
+    df = _dbnomics_fetch_series(series_id)
+    s = pd.Series(
+        pd.to_numeric(df["value"], errors="coerce").values,
+        index=pd.to_datetime(df["period"]),
+    ).dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s.name = series_id
+    return s
+
+
+def get_dbnomics_series(series_id: str, start: str = "2015-01-01") -> pd.Series:
+    s = _load_dbnomics_series(series_id)
+    return s[s.index >= pd.to_datetime(start)].dropna()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
     """
@@ -526,6 +559,9 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         s = get_multpl_series(mode=code)
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
+
+    elif source == "dbnomics":
+        return get_dbnomics_series(code, start=start)
 
     else:
         raise ValueError(f"알 수 없는 source: {source}")

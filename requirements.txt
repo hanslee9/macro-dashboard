@@ -8,3 +8,4 @@ xlrd
 lxml
 requests
 scipy
+dbnomics
