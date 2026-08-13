@@ -341,10 +341,11 @@ def main():
 
     if normalize_opt:
         # 정규화 모드: 모든 지표를 동일 스케일(시작점=100)로 단일 축 비교
+        normalized = {name: normalize(series_dict[name]) for name in names}
         for i, name in enumerate(names):
             color = COLORS[i % len(COLORS)]
             fig.add_trace(go.Scatter(
-                x=series_dict[name].index, y=normalize(series_dict[name]),
+                x=normalized[name].index, y=normalized[name],
                 mode="lines", name=name, line=dict(color=color, width=1.3),
             ))
         yaxis_conf = dict(
@@ -352,7 +353,17 @@ def main():
             tickfont=dict(size=13),
         )
         if log_opt:
-            yaxis_conf["type"] = "log"  # 정규화값은 항상 양수라 로그 적용 안전
+            # 정규화값도 원본이 0 이하(예: 추세이격률·금리차처럼 음수가 가능한 지표)를 포함하면
+            # 정규화 후에도 0 이하 값이 그대로 남아 로그스케일에서 급격한 왜곡(수직으로 튀는 형태)이 발생함.
+            norm_log_skipped = [name for name, s in normalized.items() if not (s > 0).all()]
+            if not norm_log_skipped:
+                yaxis_conf["type"] = "log"
+            else:
+                _note(
+                    f"⚠ 0 이하 값이 포함되어 로그스케일 미적용: {', '.join(norm_log_skipped)} "
+                    "(추세이격률·금리차처럼 음수가 가능한 지표는 정규화해도 로그스케일과 함께 쓰면 "
+                    "그래프가 왜곡됩니다. 로그스케일을 끄고 보시길 권장합니다.)"
+                )
         fig.update_layout(
             yaxis=yaxis_conf,
             xaxis=dict(domain=[left_domain, right_domain]),
