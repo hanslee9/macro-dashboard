@@ -88,7 +88,7 @@ INDICATORS = {
     },
 
     "외환·무역": {
-        "미국 경상수지":          {"source": "fred", "code": "BOPBCA", "freq": "분기"},
+        "미국 경상수지":          {"source": "fred", "code": "IEABC", "freq": "분기"},
         "미국 무역수지":          {"source": "fred", "code": "BOPGSTB", "freq": "월간"},
     },
 
