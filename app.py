@@ -527,6 +527,14 @@ def main():
                     "최근 시장 상황은 반영되어 있지 않습니다."
                 )
 
+            SPREAD_INDICATORS = {"하이일드 스프레드(HY OAS, CDS프록시)", "투자등급 스프레드(IG OAS)"}
+            if name_a in SPREAD_INDICATORS or name_b in SPREAD_INDICATORS:
+                _note(
+                    "⚠ 이 스프레드 지표는 제공기관(ICE Data Indices) 정책 변경으로 **2026년 4월부터 FRED에서 "
+                    "최근 3년치 데이터만 제공**됩니다. 2008년 금융위기·2020년 코로나 같은 과거 급등 구간은 "
+                    "더 이상 조회되지 않아, 상관계수 역시 최근 3년 구간 위주로 계산된 결과입니다."
+                )
+
             st.markdown("📊 *이번 분석기간 관찰*")
             st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results, n_sample=result["n"]))
 
