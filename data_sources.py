@@ -70,6 +70,7 @@ INDICATORS = {
         "S&P500":                {"source": "yfinance", "code": "^GSPC", "freq": "일간"},
         "나스닥100":              {"source": "yfinance", "code": "^NDX", "freq": "일간"},
         "다우존스":                {"source": "yfinance", "code": "^DJI", "freq": "일간"},
+        "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
         "코스피":                 {"source": "yfinance", "code": "^KS11", "freq": "일간"},
         "코스닥":                 {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
         "니케이225(일본)":        {"source": "yfinance", "code": "^N225", "freq": "일간"},
@@ -81,7 +82,7 @@ INDICATORS = {
         "하이일드 스프레드(HY OAS, CDS프록시)": {"source": "fred", "code": "BAMLH0A0HYM2", "freq": "일간"},
         "투자등급 스프레드(IG OAS)":            {"source": "fred", "code": "BAMLC0A0CM", "freq": "일간"},
         "미국 정부부채(총액)":                  {"source": "fred", "code": "GFDEBTN", "freq": "분기"},
-        "미국 가계부채":                        {"source": "fred", "code": "HHDNS", "freq": "분기"},
+        "미국 가계부채":                        {"source": "fred", "code": "CMDEBT", "freq": "분기"},
         "마진부채(FINRA, 잔액)":                {"source": "finra_margin", "code": "level", "freq": "월간"},
         "마진부채(FINRA, YoY%)":                {"source": "finra_margin", "code": "yoy", "freq": "월간"},
     },
@@ -306,6 +307,20 @@ def get_putcall_ratio(kind: str = "equity") -> pd.Series:
     return s
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_us_market_cap() -> pd.Series:
+    """
+    미국 전체 기업 시가총액(연준 Z.1 자금순환 통계, BOGZ1LM893064105Q)을
+    조 달러(USD Trillion) 단위로 반환. 버핏지수 계산의 분자와 동일한 원본 데이터.
+    분기 발표라 다른 일간 지수·주가 지표와 업데이트 빈도가 다름(그래프에서 계단식으로 보일 수 있음).
+    """
+    s = fred.get_series("BOGZ1LM893064105Q", observation_start="1945-01-01")
+    s.index = pd.to_datetime(s.index)
+    s = s.dropna() / 1_000_000.0  # 백만달러 -> 조달러(트릴리언)
+    s.name = "us_market_cap_trillion_usd"
+    return s
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)  # GDP·Z.1 모두 분기 발표라 자주 바뀌지 않음
 def get_buffett_indicator() -> pd.Series:
     """
@@ -474,8 +489,14 @@ def get_fed_target_rate_combined() -> pd.Series:
 # DBnomics (ISM 제조업 PMI 무료 대안소스)
 # ISM 공식 데이터는 유료 구독제이고, FRED의 구 코드(NAPM)는 2016년 이후 갱신 중단됨.
 # DBnomics가 ISM 원자료를 무료로 재배포하고 있어 이를 사용하되, 공식 소스가 아니므로
-# 값이 비정상적으로 튀는 구간이 있을 수 있어 화면에서 데이터를 반드시 확인할 것.
+# 값이 비정상적으로 튀는 구간이 실제로 확인됨(2026년 재배포 데이터가 특정 구간에서
+# 10~13대로 급락 — 실제 ISM 공식 발표치는 같은 기간 50대 초중반이었음).
+# ISM PMI는 역사적으로도 대략 25~75 범위를 벗어난 적이 없으므로, 이 범위를 벗어나는
+# 값은 재배포 과정의 오류로 간주해 걸러낸다(최근 구간이 비게 될 수 있음).
 # ──────────────────────────────────────────────────────────
+DBNOMICS_VALID_RANGE = (25, 75)
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _load_dbnomics_series(series_id: str) -> pd.Series:
     df = _dbnomics_fetch_series(series_id)
@@ -484,6 +505,8 @@ def _load_dbnomics_series(series_id: str) -> pd.Series:
         index=pd.to_datetime(df["period"]),
     ).dropna()
     s = s[~s.index.duplicated(keep="last")].sort_index()
+    lo, hi = DBNOMICS_VALID_RANGE
+    s = s[(s >= lo) & (s <= hi)]  # 재배포 과정 오류로 보이는 비정상값 제거
     s.name = series_id
     return s
 
@@ -562,6 +585,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "dbnomics":
         return get_dbnomics_series(code, start=start)
+
+    elif source == "us_market_cap":
+        s = get_us_market_cap()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
 
     else:
         raise ValueError(f"알 수 없는 source: {source}")

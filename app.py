@@ -520,6 +520,13 @@ def main():
                     "정확한 공식 수치는 ismworld.org를 참고해주세요."
                 )
 
+            if name_a == "CBOE 풋/콜비율(주식)" or name_b == "CBOE 풋/콜비율(주식)":
+                _note(
+                    "⚠ 'CBOE 풋/콜비율(주식)'은 CBOE가 **2019년 10월 4일 이후 해당 공개 파일의 갱신을 중단**해, "
+                    "그 이후 데이터가 존재하지 않습니다. 상관계수는 갱신이 있었던 과거 구간까지만 계산된 결과이며, "
+                    "최근 시장 상황은 반영되어 있지 않습니다."
+                )
+
             st.markdown("📊 *이번 분석기간 관찰*")
             st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results, n_sample=result["n"]))
 
