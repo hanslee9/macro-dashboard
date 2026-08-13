@@ -95,7 +95,7 @@ INDICATORS = {
         "WTI 원유":               {"source": "fred", "code": "DCOILWTICO", "freq": "일간"},
         "금 선물":                {"source": "yfinance", "code": "GC=F", "freq": "일간"},
         "은 선물":                {"source": "yfinance", "code": "SI=F", "freq": "일간"},
-        "발틱운임지수(BDI) 프록시-해운ETF": {"source": "yfinance", "code": "SEA", "freq": "일간"},  # BDI 자체는 유료(Baltic Exchange)라 해운 ETF로 근사 대체
+        "발틱운임지수(BDI) 프록시-건화물운임선물ETF": {"source": "yfinance", "code": "BDRY", "freq": "일간"},  # BDI 자체는 유료(Baltic Exchange). BDRY는 Capesize/Panamax/Supramax 운임선물 직접 편입 ETF(2018.3~), 해운주 ETF(SEA)보다 BDI에 더 직접적으로 연동됨
     },
 
     "밸류에이션(복합지표)": {
