@@ -67,20 +67,25 @@ def _compute_lag_correlations(s_a: pd.Series, s_b: pd.Series, lags=LAG_MONTHS):
     return results
 
 
-def _dynamic_lag_observation(name_a: str, name_b: str, lag_results: list) -> str:
+def _dynamic_lag_observation(name_a: str, name_b: str, lag_results: list, n_sample: int = None) -> str:
     """
     [상관지수] 표의 실제 계산값을 인용해서 동적으로 관찰 문장을 생성.
     - 동시(0) 대비 절댓값이 0.1 이상 더 강한 lag가 있을 때만 "선행성 시사"로 서술.
-    - 그 외에는 보수적으로 "뚜렷한 시차 패턴 없음, 동시적 관계"로 서술.
+    - 그 외에는 동시(0) 상관계수의 강도(강한/보통/약한 + 양/음)를 직접 서술.
+    - 월간 환산 표본이 24개월 미만이면 신뢰성 관련 caveat을 덧붙임.
     """
     valid = {r["lag"]: r["corr"] for r in lag_results if r["corr"] is not None}
     if 0 not in valid:
         return "동시(0개월) 기준 상관계수를 계산할 표본이 부족해 시차 패턴을 판단할 수 없습니다."
 
     base = valid[0]
+    short_sample_note = ""
+    if n_sample is not None and n_sample < 24:
+        short_sample_note = f" 다만 가용 데이터 구간이 짧아(월간 환산 {n_sample}개월) 수치의 신뢰성이 낮을 수 있습니다."
+
     others = {lag: c for lag, c in valid.items() if lag != 0}
     if not others:
-        return f"동시(0개월) 기준 상관계수는 {base:+.2f}이며, 비교할 시차 데이터가 부족합니다."
+        return f"동시(0개월) 기준 상관계수는 {base:+.2f}이며, 비교할 시차 데이터가 부족합니다.{short_sample_note}"
 
     best_lag, best_corr = max(others.items(), key=lambda kv: abs(kv[1]))
     diff = abs(best_corr) - abs(base)
@@ -92,13 +97,15 @@ def _dynamic_lag_observation(name_a: str, name_b: str, lag_results: list) -> str
         return (
             f"동시(0개월) 상관계수는 {base:+.2f}인 반면, {lag_label} 시차에서 {best_corr:+.2f}로 "
             f"더 강하게 나타나, {direction}하는 패턴이 시사됩니다. "
-            f"다만 이는 이번 분석기간의 관찰 결과이며, 통계적으로 확정된 인과관계는 아닙니다."
+            f"다만 이는 이번 분석기간의 관찰 결과이며, 통계적으로 확정된 인과관계는 아닙니다.{short_sample_note}"
         )
     else:
-        return (
-            f"동시(0개월) 상관계수({base:+.2f})와 시차 상관계수(최대 {best_corr:+.2f}, {lag_label}) 간 "
-            f"차이가 크지 않아, 뚜렷한 선행·후행 패턴 없이 대체로 동시적(coincident)인 관계로 해석됩니다."
-        )
+        a = abs(base)
+        if a < 0.2:
+            return f"상관계수가 낮아(동시 기준 {base:+.2f}) 두 지표 간 상호 관련성이 낮은 것으로 보입니다.{short_sample_note}"
+        level = "강한" if a >= 0.7 else ("보통 수준의" if a >= 0.4 else "약한")
+        sign = "양(+)의" if base >= 0 else "음(−)의"
+        return f"{level} {sign} 상관관계입니다(동시 기준 {base:+.2f}).{short_sample_note}"
 
 
 def _interpret_strength(corr: float) -> str:
@@ -504,8 +511,17 @@ def main():
 
             # 3) [해설] — 동적 관찰(상관지수 표 인용) + 고정 서사(있으면)
             st.markdown("**[해설]**")
+
+            if name_a == "ISM 제조업 PMI" or name_b == "ISM 제조업 PMI":
+                _note(
+                    "⚠ 'ISM 제조업 PMI'는 공식 유료소스 대신 **무료 대안소스(DBnomics)**로 수집됩니다. "
+                    "재배포 과정에서 비정상값이 섞이는 경우가 확인되어, 통상적인 지수 범위(25~75)를 벗어나는 값은 "
+                    "자동으로 제외하고 있어 최근 일부 구간이 비어있을 수 있고, 상관계수 역시 그 영향을 받을 수 있습니다. "
+                    "정확한 공식 수치는 ismworld.org를 참고해주세요."
+                )
+
             st.markdown("📊 *이번 분석기간 관찰*")
-            st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results))
+            st.write(_dynamic_lag_observation(lead_name, lag_name, lag_results, n_sample=result["n"]))
 
             narrative = get_narrative(name_a, name_b)
             if narrative:
