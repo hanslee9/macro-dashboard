@@ -312,11 +312,15 @@ def get_us_market_cap() -> pd.Series:
     """
     미국 전체 기업 시가총액(연준 Z.1 자금순환 통계, BOGZ1LM893064105Q)을
     조 달러(USD Trillion) 단위로 반환. 버핏지수 계산의 분자와 동일한 원본 데이터.
-    분기 발표라 다른 일간 지수·주가 지표와 업데이트 빈도가 다름(그래프에서 계단식으로 보일 수 있음).
+    - FRED 원본 인덱스는 분기 '시작일' 기준이라, 분기 '말일' 기준으로 변환하는
+      get_buffett_indicator()와 인덱스가 어긋나 다른 지표와 짝지을 때 월간 리샘플링
+      결합 시 표본이 0이 되는 문제가 있었음(같은 달에 값이 존재하지 않게 됨).
+      동일하게 분기말일로 맞춰 다른 분기 지표들과 정상적으로 비교되도록 함.
     """
     s = fred.get_series("BOGZ1LM893064105Q", observation_start="1945-01-01")
     s.index = pd.to_datetime(s.index)
     s = s.dropna() / 1_000_000.0  # 백만달러 -> 조달러(트릴리언)
+    s = s.resample("QE").last()  # 분기말일로 정렬(버핏지수 등 다른 분기지표와 정합성 확보)
     s.name = "us_market_cap_trillion_usd"
     return s
 
