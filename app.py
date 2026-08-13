@@ -160,6 +160,16 @@ def main():
         [data-testid="stAppViewContainer"] a {
             color: #1a73e8 !important;
         }
+        /* 체크박스 테두리를 더 굵고 선명하게 (스트림릿 버전별 DOM 차이 대응, 여러 선택자 중첩) */
+        [data-testid="stCheckbox"] label span[data-baseweb="checkbox"] > div:first-child,
+        [data-testid="stCheckbox"] span[role="checkbox"],
+        [data-testid="stCheckbox"] div[data-baseweb="checkbox"] > div {
+            border-width: 2px !important;
+            border-color: #444444 !important;
+        }
+        [data-testid="stCheckbox"] svg {
+            stroke-width: 1.5px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -188,7 +198,7 @@ def main():
     grouped = list_indicator_names()
 
     # 화면 표시 순서: 지수·주가를 맨 앞으로
-    CATEGORY_ORDER = ["지수·주가", "미국 거시지표", "금리·통화", "신용·부채", "외환·무역", "원자재", "밸류에이션(복합지표)"]
+    CATEGORY_ORDER = ["지수·주가", "미국 거시지표", "금리·통화", "신용·부채", "외환·무역", "원자재", "밸류에이션 배수", "복합·추세지표"]
     ordered_categories = [c for c in CATEGORY_ORDER if c in grouped] + [c for c in grouped if c not in CATEGORY_ORDER]
 
     all_names = [name for cat in ordered_categories for name in grouped[cat]]
@@ -255,7 +265,18 @@ def main():
     # 현재 선택된 개수(위젯 렌더링 전 session_state 기준으로 미리 파악)
     current_count = sum(1 for name in all_names_with_custom if st.session_state.get(f"chk_{name}", False))
 
-    st.markdown("**비교할 지표를 선택하세요 (최대 4개, 이미 선택된 것은 다시 눌러 해제)**")
+    # 카테고리별 '중요도 상위' 지표 — 체크박스 라벨을 굵게 표시해 시각적으로 구분
+    IMPORTANT_INDICATORS = {
+        "비농업고용자수", "미국 CPI", "미국 실업률",
+        "미국 10년 국채금리", "미국 기준금리(FFR, 실효금리)", "미국 2Y-10Y 금리차",
+        "S&P500", "나스닥100", "VIX(변동성지수)",
+        "하이일드 스프레드(HY OAS, CDS프록시)", "마진부채(FINRA, YoY%)",
+        "WTI 원유", "금 선물",
+        "S&P500 PER(일반)", "S&P500 CAPE(실러PER)", "S&P500 PBR(주가순자산)",
+        "버핏지수(시총/GDP, %)", "S&P500 추세이격률(%)",
+    }
+
+    st.markdown("**비교할 지표를 선택하세요 (최대 4개, 이미 선택된 것은 다시 눌러 해제 / 굵게 표시된 지표는 주가 관련성이 높아 우선 참고할 만한 지표입니다)**")
     grid_cols = st.columns(len(grid_sections))
     for col, (cat, names) in zip(grid_cols, grid_sections):
         with col:
@@ -264,7 +285,8 @@ def main():
                 key = f"chk_{name}"
                 is_checked = st.session_state.get(key, False)
                 disabled = (not is_checked) and (current_count >= MAX_SELECT)
-                st.checkbox(name, key=key, disabled=disabled)
+                label = f"**{name}**" if name in IMPORTANT_INDICATORS else name
+                st.checkbox(label, key=key, disabled=disabled)
 
     # 최종 선택 목록 (전체 지표 순서를 그대로 유지 — 그래프 범례 색상 안정성용)
     selected = [name for name in all_names_with_custom if st.session_state.get(f"chk_{name}", False)]
@@ -565,6 +587,12 @@ def main():
                     "⚠ 'PEG비율'은 원래 애널리스트의 향후 이익성장률 **전망치**를 쓰지만, 이 전망치는 무료 "
                     "공개 소스가 없어 여기서는 **과거(trailing) EPS 성장률**로 근사한 대체 지표입니다. "
                     "미래 기대가 아닌 과거 실적 기준이라 실제 PEG보다 후행적으로 움직일 수 있습니다."
+                )
+
+            if name_a == "S&P500 ROE(자기자본이익률, %)" or name_b == "S&P500 ROE(자기자본이익률, %)":
+                _note(
+                    "ℹ 'ROE'는 별도 재무제표 수집 없이 **PBR÷PER**로 계산한 값입니다(같은 시점 주가가 "
+                    "상쇄되어 근사치가 아닌 정확한 값). multpl PBR·PER 두 시계열의 데이터 품질에 그대로 의존합니다."
                 )
 
             st.markdown("📊 *이번 분석기간 관찰*")

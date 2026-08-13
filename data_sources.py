@@ -30,66 +30,66 @@ fred = Fred(api_key=st.secrets["FRED_API_KEY"])
 INDICATORS = {
 
     "미국 거시지표": {
-        "미국 실질GDP성장률":     {"source": "fred", "code": "A191RL1Q225SBEA", "freq": "분기"},
-        "미국 명목GDP":           {"source": "fred", "code": "GDP", "freq": "분기"},
         "비농업고용자수":         {"source": "fred", "code": "PAYEMS", "freq": "월간"},
         "미국 CPI":               {"source": "fred", "code": "CPIAUCSL", "freq": "월간"},
-        "근원 CPI":               {"source": "fred", "code": "CPILFESL", "freq": "월간"},
-        "미국 PPI":               {"source": "fred", "code": "PPIACO", "freq": "월간"},
         "미국 실업률":            {"source": "fred", "code": "UNRATE", "freq": "월간"},
+        "ISM 제조업 PMI":         {"source": "dbnomics", "code": "ISM/pmi/pm", "freq": "월간"},  # 무료 대안소스(DBnomics), 데이터 정합성 검증 필요
+        "신규 실업급여 신청 건수":  {"source": "fred", "code": "ICSA", "freq": "주간"},
+        "미국 실질GDP성장률":     {"source": "fred", "code": "A191RL1Q225SBEA", "freq": "분기"},
+        "근원 CPI":               {"source": "fred", "code": "CPILFESL", "freq": "월간"},
+        "소매 매출액":             {"source": "fred", "code": "RSAFS", "freq": "월간"},
+        "개인소비지출(PCE)":        {"source": "fred", "code": "PCE", "freq": "월간"},
+        "미국 PPI":               {"source": "fred", "code": "PPIACO", "freq": "월간"},
         "미국 산업생산지수":       {"source": "fred", "code": "INDPRO", "freq": "월간"},
         "미국 소비자심리지수":     {"source": "fred", "code": "UMCSENT", "freq": "월간"},
+        "OECD 경기선행지수(미국, CLI)": {"source": "fred", "code": "USALOLITONOSTSAM", "freq": "월간"},
+        "개인소득":                {"source": "fred", "code": "PI", "freq": "월간"},
+        "내구재 수주":             {"source": "fred", "code": "DGORDER", "freq": "월간"},
+        "신규 주택허가 건수":       {"source": "fred", "code": "PERMIT", "freq": "월간"},
+        "미국 명목GDP":           {"source": "fred", "code": "GDP", "freq": "분기"},
         "중장비트럭 판매량(선행지표)": {"source": "fred", "code": "HTRUCKSSAAR", "freq": "월간"},
         "미국 경기침체확률(Chauvet-Piger)": {"source": "fred", "code": "RECPROUSM156N", "freq": "월간"},
-        "신규 실업급여 신청 건수":  {"source": "fred", "code": "ICSA", "freq": "주간"},
-        "소매 매출액":             {"source": "fred", "code": "RSAFS", "freq": "월간"},
-        "개인소득":                {"source": "fred", "code": "PI", "freq": "월간"},
-        "개인소비지출(PCE)":        {"source": "fred", "code": "PCE", "freq": "월간"},
-        "내구재 수주":             {"source": "fred", "code": "DGORDER", "freq": "월간"},
-        "ISM 제조업 PMI":         {"source": "dbnomics", "code": "ISM/pmi/pm", "freq": "월간"},  # 무료 대안소스(DBnomics), 데이터 정합성 검증 필요
-        "신규 주택허가 건수":       {"source": "fred", "code": "PERMIT", "freq": "월간"},
-        "OECD 경기선행지수(미국, CLI)": {"source": "fred", "code": "USALOLITONOSTSAM", "freq": "월간"},
     },
 
     "금리·통화": {
-        "미국 기준금리(FFR, 실효금리)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
-        "미국 기준금리(목표, 계단식)":      {"source": "fed_target_combined", "code": "target", "freq": "일간"},
-        "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
-        "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
         "미국 10년 국채금리":     {"source": "fred", "code": "DGS10", "freq": "일간"},
+        "미국 기준금리(FFR, 실효금리)":     {"source": "fred", "code": "FEDFUNDS", "freq": "월간"},
         "미국 2Y-10Y 금리차":     {"source": "fred", "code": "T10Y2Y", "freq": "일간"},
+        "달러인덱스(DXY)":        {"source": "yfinance", "code": "DX-Y.NYB", "freq": "일간"},
+        "미국 기준금리(목표, 계단식)":      {"source": "fed_target_combined", "code": "target", "freq": "일간"},
         "미국 M2 통화량":         {"source": "fred", "code": "M2SL", "freq": "월간"},
         "연준 자산규모(Fed B/S)": {"source": "fred", "code": "WALCL", "freq": "주간"},
         "미국 30년 모기지금리":   {"source": "fred", "code": "MORTGAGE30US", "freq": "주간"},
+        "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
+        "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
         "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
         "엔/달러 환율":           {"source": "fred", "code": "DEXJPUS", "freq": "일간"},
-        "달러인덱스(DXY)":        {"source": "yfinance", "code": "DX-Y.NYB", "freq": "일간"},
     },
 
     "지수·주가": {
         "S&P500":                {"source": "yfinance", "code": "^GSPC", "freq": "일간"},
         "나스닥100":              {"source": "yfinance", "code": "^NDX", "freq": "일간"},
+        "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
         "다우존스":                {"source": "yfinance", "code": "^DJI", "freq": "일간"},
-        "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
         "코스피":                 {"source": "yfinance", "code": "^KS11", "freq": "일간"},
+        "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
         "코스닥":                 {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
         "니케이225(일본)":        {"source": "yfinance", "code": "^N225", "freq": "일간"},
-        "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
         "CBOE 풋/콜비율(주식)":   {"source": "cboe_putcall", "code": "equity", "freq": "일간"},
     },
 
     "신용·부채": {
         "하이일드 스프레드(HY OAS, CDS프록시)": {"source": "fred", "code": "BAMLH0A0HYM2", "freq": "일간"},
-        "투자등급 스프레드(IG OAS)":            {"source": "fred", "code": "BAMLC0A0CM", "freq": "일간"},
-        "미국 정부부채(총액)":                  {"source": "fred", "code": "GFDEBTN", "freq": "분기"},
-        "미국 가계부채":                        {"source": "fred", "code": "CMDEBT", "freq": "분기"},
-        "마진부채(FINRA, 잔액)":                {"source": "finra_margin", "code": "level", "freq": "월간"},
         "마진부채(FINRA, YoY%)":                {"source": "finra_margin", "code": "yoy", "freq": "월간"},
+        "투자등급 스프레드(IG OAS)":            {"source": "fred", "code": "BAMLC0A0CM", "freq": "일간"},
+        "마진부채(FINRA, 잔액)":                {"source": "finra_margin", "code": "level", "freq": "월간"},
+        "미국 가계부채":                        {"source": "fred", "code": "CMDEBT", "freq": "분기"},
+        "미국 정부부채(총액)":                  {"source": "fred", "code": "GFDEBTN", "freq": "분기"},
     },
 
     "외환·무역": {
-        "미국 경상수지":          {"source": "fred", "code": "IEABC", "freq": "분기"},
         "미국 무역수지":          {"source": "fred", "code": "BOPGSTB", "freq": "월간"},
+        "미국 경상수지":          {"source": "fred", "code": "IEABC", "freq": "분기"},
     },
 
     "원자재": {
@@ -99,23 +99,29 @@ INDICATORS = {
         "발틱운임지수(BDI) 프록시-건화물운임선물ETF": {"source": "yfinance", "code": "BDRY", "freq": "일간"},  # BDI 자체는 유료(Baltic Exchange). BDRY는 Capesize/Panamax/Supramax 운임선물 직접 편입 ETF(2018.3~), 해운주 ETF(SEA)보다 BDI에 더 직접적으로 연동됨
     },
 
-    "밸류에이션(복합지표)": {
+    "밸류에이션 배수": {
+        "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
+        "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
+        "S&P500 PBR(주가순자산)": {"source": "multpl", "code": "price_to_book", "freq": "월간"},
+        "S&P500 ROE(자기자본이익률, %)": {"source": "roe", "code": "roe", "freq": "월간"},  # PBR/PER = 이익/순자산 = ROE (근사 아닌 정확한 항등식)
+        "S&P500 배당수익률(%)":   {"source": "multpl", "code": "dividend_yield", "freq": "월간"},
+        "S&P500 이익수익률(%)":   {"source": "multpl", "code": "earnings_yield", "freq": "월간"},
+        "S&P500 PEG비율(트레일링 근사)": {"source": "peg", "code": "peg", "freq": "월간"},  # 향후이익성장률 대신 과거EPS성장률 기준 근사치
+        "S&P500 PSR(주가매출)":   {"source": "multpl", "code": "price_to_sales", "freq": "월간"},
+        "S&P500 배당성향(Payout Ratio, %)": {"source": "payout_ratio", "code": "payout", "freq": "월간"},  # 배당수익률×PER = 배당/이익 (정확한 항등식)
+        "미국 기업이익률(GDP대비, %)": {"source": "fred_ratio", "code": "CP/GDP", "freq": "분기"},  # 기업이익(CP) / GDP — 마진이 역사적으로 높은지 판단하는 참고 지표
+    },
+
+    "복합·추세지표": {
         "버핏지수(시총/GDP, %)":  {"source": "buffett_indicator", "code": "ratio", "freq": "분기"},
-        "버핏지수 추세이격률(%)": {"source": "buffett_deviation", "code": "pct", "freq": "분기"},
         "S&P500 추세이격률(%)":  {"source": "trend_deviation", "code": "S&P500", "freq": "일간"},
+        "버핏지수 추세이격률(%)": {"source": "buffett_deviation", "code": "pct", "freq": "분기"},
         "S&P500 CAPE 추세이격률(%)": {"source": "trend_deviation", "code": "S&P500 CAPE(실러PER)", "freq": "월간"},
         "나스닥100 추세이격률(%)":   {"source": "trend_deviation", "code": "나스닥100", "freq": "일간"},
+        "코스피 추세이격률(%)":      {"source": "trend_deviation", "code": "코스피", "freq": "일간"},
         "S&P500 월간수익률(%)":      {"source": "monthly_return", "code": "S&P500", "freq": "월간"},
         "나스닥100 월간수익률(%)":    {"source": "monthly_return", "code": "나스닥100", "freq": "월간"},
         "코스피 월간수익률(%)":       {"source": "monthly_return", "code": "코스피", "freq": "월간"},
-        "코스피 추세이격률(%)":      {"source": "trend_deviation", "code": "코스피", "freq": "일간"},
-        "S&P500 PER(일반)":       {"source": "multpl", "code": "pe", "freq": "월간"},
-        "S&P500 CAPE(실러PER)":   {"source": "multpl", "code": "cape", "freq": "월간"},
-        "S&P500 배당수익률(%)":   {"source": "multpl", "code": "dividend_yield", "freq": "월간"},
-        "S&P500 이익수익률(%)":   {"source": "multpl", "code": "earnings_yield", "freq": "월간"},
-        "S&P500 PBR(주가순자산)": {"source": "multpl", "code": "price_to_book", "freq": "월간"},
-        "S&P500 PSR(주가매출)":   {"source": "multpl", "code": "price_to_sales", "freq": "월간"},
-        "S&P500 PEG비율(트레일링 근사)": {"source": "peg", "code": "peg", "freq": "월간"},  # 향후이익성장률 대신 과거EPS성장률 기준 근사치
     },
 }
 
@@ -293,6 +299,62 @@ def get_peg_ratio() -> pd.Series:
     peg = peg.dropna()
     peg.name = "sp500_peg_trailing"
     return peg
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def get_roe_proxy() -> pd.Series:
+    """
+    S&P500 ROE(자기자본이익률, %) = PBR ÷ PER × 100
+
+    PBR = 주가/순자산, PER = 주가/이익 이므로 PBR÷PER = 이익/순자산 = ROE.
+    같은 시점의 '주가'가 분자·분모에서 정확히 상쇄되므로, 이는 근사치가 아니라
+    수학적으로 정확한 항등식이다. multpl의 price_to_book, pe 두 시계열만으로 산출한다.
+    """
+    pbr = get_multpl_series(mode="price_to_book")
+    per = get_multpl_series(mode="pe")
+    combined = pd.DataFrame({"pbr": pbr, "per": per}).dropna()
+    roe = (combined["pbr"] / combined["per"]) * 100
+    roe.name = "sp500_roe_pct"
+    return roe
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def get_payout_ratio() -> pd.Series:
+    """
+    S&P500 배당성향(Payout Ratio, %) = 배당수익률 × PER
+
+    배당수익률 = 배당/주가, PER = 주가/이익 이므로 곱하면 배당/이익 = 배당성향.
+    ROE와 마찬가지로 같은 시점의 '주가'가 상쇄되어 근사치가 아닌 정확한 값이다.
+    """
+    div_yield = get_multpl_series(mode="dividend_yield")
+    per = get_multpl_series(mode="pe")
+    combined = pd.DataFrame({"dy": div_yield, "per": per}).dropna()
+    payout = (combined["dy"] / 100) * combined["per"] * 100  # dividend_yield는 %단위이므로 100으로 나눈 뒤 다시 %로
+    payout.name = "sp500_payout_ratio_pct"
+    return payout
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def get_corporate_profit_margin() -> pd.Series:
+    """
+    미국 기업이익률(GDP대비, %) = 기업이익(CP, FRED) ÷ 명목GDP(FRED) × 100
+
+    S&P500 개별 기업 마진 데이터는 무료로 구하기 어렵지만, 국가 전체 기업이익을
+    GDP와 비교하는 이 지표는 '지금 기업 마진이 역사적으로 높은 수준인지'를 가늠하는
+    대표적인 무료 매크로 프록시다. CAPE·일반PER 괴리를 해석할 때 참고할 수 있다.
+    """
+    cp = fred.get_series("CP", observation_start="1947-01-01")
+    cp.index = pd.to_datetime(cp.index)
+    cp = cp.dropna()
+
+    gdp = fred.get_series("GDP", observation_start="1947-01-01")
+    gdp.index = pd.to_datetime(gdp.index)
+    gdp = gdp.dropna()
+
+    combined = pd.DataFrame({"cp": cp, "gdp": gdp}).dropna()
+    margin = (combined["cp"] / combined["gdp"]) * 100
+    margin.name = "us_corporate_profit_margin_pct"
+    return margin
 
 
 
@@ -632,6 +694,25 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "peg":
         s = get_peg_ratio()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "roe":
+        s = get_roe_proxy()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "payout_ratio":
+        s = get_payout_ratio()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "fred_ratio":
+        # code: "CP/GDP" 형태만 우선 지원(기업이익률 전용). 향후 다른 비율 추가 시 일반화 가능.
+        if code == "CP/GDP":
+            s = get_corporate_profit_margin()
+        else:
+            raise ValueError(f"알 수 없는 fred_ratio code: {code}")
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
