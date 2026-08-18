@@ -285,7 +285,6 @@ def get_multpl_series(mode: str) -> pd.Series:
     return s
 
 
-@st.cache_data(ttl=24 * 3600, show_spinner=False)
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_sp500_master_series() -> pd.Series:
     """
@@ -961,7 +960,12 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
             # '넓게 한 번 받아서 캐싱해두고, 필요한 구간만 슬라이싱'하는 방식으로 처리해
             # 실제 yf.download 호출 자체를 항상 1번으로 고정한다.
             s = _get_sp500_master_series()
-            return s[s.index >= pd.to_datetime(start)].dropna()
+            # 캐시를 거치는 과정에서 인덱스 타입이 흐트러질 가능성에 대비해
+            # 비교 직전에 한 번 더 명시적으로 DatetimeIndex로 재확정.
+            s = s.copy()
+            s.index = pd.DatetimeIndex(pd.to_datetime(s.index))
+            start_ts = pd.Timestamp(start)
+            return s.loc[s.index >= start_ts].dropna()
         df = yf.download(code, start=start, progress=False)
         if df.empty:
             return pd.Series(dtype=float)
