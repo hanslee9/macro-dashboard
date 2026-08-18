@@ -9,5 +9,3 @@ lxml
 requests
 scipy
 dbnomics
-pykrx
-setuptools<82

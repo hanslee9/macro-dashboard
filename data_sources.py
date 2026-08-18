@@ -299,6 +299,10 @@ def _get_sp500_master_series() -> pd.Series:
     s = df["Close"]
     if isinstance(s, pd.DataFrame):
         s = s.iloc[:, 0]
+    # yfinance 버전에 따라 컬럼 구조(멀티인덱스 등)가 달라지며 인덱스 형식도 영향을
+    #받을 수 있어(예: '>=' not supported between numpy.ndarray and Timestamp 에러),
+    # 명시적으로 DatetimeIndex로 정규화해 이후 날짜 비교 연산이 항상 정상 동작하도록 함.
+    s.index = pd.DatetimeIndex(pd.to_datetime(s.index))
     s = s.dropna()
     s.name = "^GSPC"
     return s
@@ -884,67 +888,27 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
     return s
 
 
-def _get_kospi_index_fundamental() -> pd.DataFrame:
-    """
-    pykrx로 코스피 지수(코드 1001) 전체의 일별 PER/PBR/배당수익률을 조회.
-    pykrx는 KRX 로그인(계정 ID/PW, 개인 실명이 아닌 일반 회원가입 계정)이 필요하며,
-    Streamlit Secrets의 KRX_ID/KRX_PW를 환경변수로 주입해 사용한다.
-    KRX 서버 응답 속도상 전체 기간(2000년대~현재)을 한 번에 긁으면 느릴 수 있어
-    12시간 캐시로 부담을 줄인다.
-    """
-    import os
-    if "KRX_ID" not in st.secrets or "KRX_PW" not in st.secrets:
-        raise ValueError(
-            "KRX_ID/KRX_PW가 Streamlit Secrets에 설정되어 있지 않습니다. "
-            "KRX 계정 정보를 Secrets에 등록해주세요."
-        )
-    os.environ["KRX_ID"] = st.secrets["KRX_ID"]
-    os.environ["KRX_PW"] = st.secrets["KRX_PW"]
-
-    from pykrx import stock
-
-    end = pd.Timestamp.today().strftime("%Y%m%d")
-    df = stock.get_index_fundamental("20000101", end, "1001")  # 1001 = 코스피
-    if df is None or df.empty:
-        raise ValueError("pykrx(KRX) 조회 결과가 비어 있습니다(로그인 실패 가능성 포함).")
-    df.index = pd.to_datetime(df.index)
-    return df
-
-
-@st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_kospi_per() -> pd.Series:
-    """코스피 PER(일반). pykrx(KRX 로그인) 경유."""
-    df = _get_kospi_index_fundamental()
-    s = pd.to_numeric(df["PER"], errors="coerce").dropna()
-    s.name = "kospi_per"
-    return s
+    """
+    코스피 PER(일반).
+    ECOS(한국은행), KOSIS(통계청), KRX(pykrx) 세 경로를 모두 시도했으나 전부
+    Streamlit Cloud에서 접속 차단(또는 로그인 실패)이 확인되어 결측 처리로 확정.
+    """
+    raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
-@st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_kospi_pbr() -> pd.Series:
-    """코스피 PBR. pykrx(KRX 로그인) 경유."""
-    df = _get_kospi_index_fundamental()
-    s = pd.to_numeric(df["PBR"], errors="coerce").dropna()
-    s.name = "kospi_pbr"
-    return s
+    """코스피 PBR. (사유는 get_kospi_per 참고)"""
+    raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
-@st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_kospi_dividend_yield() -> pd.Series:
-    """코스피 배당수익률(%). pykrx(KRX 로그인) 경유."""
-    df = _get_kospi_index_fundamental()
-    s = pd.to_numeric(df["배당수익률"], errors="coerce").dropna()
-    s.name = "kospi_dividend_yield"
-    return s
+    """코스피 배당수익률(%). (사유는 get_kospi_per 참고)"""
+    raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
 def get_kospi_market_cap() -> pd.Series:
-    """
-    코스피 시가총액.
-    pykrx의 지수 펀더멘털 함수는 PER/PBR/배당수익률만 제공하고 시가총액은
-    포함하지 않는다(개별 종목 시가총액을 전부 합산해야 해서 훨씬 무거운 작업).
-    당장은 결측 처리.
-    """
+    """코스피 시가총액. (사유는 get_kospi_per 참고)"""
     raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
@@ -1004,6 +968,7 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         s = df["Close"]
         if isinstance(s, pd.DataFrame):  # 멀티인덱스 컬럼 방지
             s = s.iloc[:, 0]
+        s.index = pd.DatetimeIndex(pd.to_datetime(s.index))  # 인덱스 형식 방어(위 ^GSPC 주석 참고)
         return s.dropna()
 
     elif source == "finra_margin":
