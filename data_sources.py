@@ -46,8 +46,8 @@ INDICATORS = {
         "코스피 월간수익률(%)":   {"source": "monthly_return", "code": "코스피지수", "freq": "월간"},
         "한국 명목GDP":           {"source": "fred", "code": "MKTGDPKRA646NWDB", "freq": "연간"},
         "한국 CPI":               {"source": "fred", "code": "KORCPIALLMINMEI", "freq": "월간"},
-        "한국 M2 통화량":         {"source": "ecos_m2", "code": "m2", "freq": "월간"},  # ECOS 101Y003 (FRED판은 2017년 이후 정지되어 폐기)
-        "한국 기준금리":           {"source": "ecos_base_rate", "code": "base_rate", "freq": "일간"},  # ECOS 722Y001/0101000, 한국은행 공식 기준금리
+        "한국 M2 통화량":         {"source": "kosis_m2", "code": "m2", "freq": "월간"},  # KOSIS DT_101Y002, itmId=13103134509999+ (확인된 정확한 코드)
+        "한국 기준금리":           {"source": "ecos_base_rate", "code": "base_rate", "freq": "일간"},  # 한국은행 공식 발표이력(1999~) 하드코딩, ECOS 실시간 접속차단 대체
         "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
         "한국 무역수지":           {"source": "korea_trade_balance", "code": "trade", "freq": "분기"},  # FRED 수출-수입 자체계산
         "한국 경상수지":           {"source": "fred", "code": "KORB6BLTT02STSAQ", "freq": "분기"},  # OECD, GDP대비 %
@@ -722,23 +722,95 @@ def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_korea_base_rate() -> pd.Series:
-    """한국은행 기준금리(%, 일간). 통계표코드 722Y001, 항목코드 0101000(다수 독립 소스에서 확인됨)."""
-    return get_ecos_series(stat_code="722Y001", cycle="D", item_code="0101000")
+    """
+    한국은행 공식 기준금리(%, 계단식).
+
+    ECOS 실시간 API는 Streamlit Cloud에서 네트워크 단 접속이 차단되어 사용 불가.
+    기준금리는 매일 바뀌는 값이 아니라 금융통화위원회가 결정할 때만(연 8회 이하)
+    바뀌는 '계단식' 값이라, 변경 시점 전체 이력을 아래에 직접 기록해두고
+    각 시점부터 다음 변경 시점까지 그 값을 그대로 유지(step function)하는 방식으로
+    처리한다. 위키백과 '한국은행 기준금리' 문서(1999~2023) + 한국은행 공식
+    발표자료 기반 최신 정리(2024~2026)를 교차 확인해 작성.
+
+    ⚠ 새로운 금통위 결정이 나오면(대략 연 8회) 아래 리스트 맨 끝에 한 줄만
+    추가하면 된다. 이 함수 자체를 다시 손볼 필요는 없음.
+    최종 반영일 기준(2026-08-18) 최신값: 2026-07-16, 2.75%
+    """
+    history = [
+        ("1999-05-06", 4.75), ("2000-02-10", 5.00), ("2000-10-05", 5.25),
+        ("2001-02-08", 5.00), ("2001-07-05", 4.75), ("2001-08-09", 4.50),
+        ("2001-09-19", 4.00), ("2002-05-07", 4.25), ("2003-05-13", 4.00),
+        ("2003-07-10", 3.75), ("2004-08-12", 3.50), ("2004-11-11", 3.25),
+        ("2005-10-11", 3.50), ("2005-12-08", 3.75), ("2006-02-09", 4.00),
+        ("2006-06-08", 4.25), ("2006-08-10", 4.50), ("2007-07-12", 4.75),
+        ("2007-08-09", 5.00), ("2008-08-07", 5.25), ("2008-10-09", 5.00),
+        ("2008-10-27", 4.25), ("2008-11-07", 4.00), ("2008-12-11", 3.00),
+        ("2009-01-09", 2.50), ("2009-02-12", 2.00), ("2010-07-09", 2.25),
+        ("2010-11-16", 2.50), ("2011-01-13", 2.75), ("2011-03-10", 3.00),
+        ("2011-06-10", 3.25), ("2012-07-12", 3.00), ("2012-10-11", 2.75),
+        ("2013-05-09", 2.50), ("2014-08-14", 2.25), ("2014-10-15", 2.00),
+        ("2015-03-12", 1.75), ("2015-06-11", 1.50), ("2016-06-09", 1.25),
+        ("2017-11-30", 1.50), ("2018-11-30", 1.75), ("2019-07-18", 1.50),
+        ("2019-10-16", 1.25), ("2020-03-17", 0.75), ("2020-05-28", 0.50),
+        ("2021-08-26", 0.75), ("2021-11-25", 1.00), ("2022-01-14", 1.25),
+        ("2022-04-14", 1.50), ("2022-05-26", 1.75), ("2022-07-13", 2.25),
+        ("2022-08-25", 2.50), ("2022-10-12", 3.00), ("2022-11-24", 3.25),
+        ("2023-01-13", 3.50), ("2024-10-11", 3.25), ("2024-11-28", 3.00),
+        ("2025-02-25", 2.75), ("2025-05-29", 2.50), ("2026-07-16", 2.75),
+    ]
+    idx = pd.to_datetime([d for d, _ in history])
+    vals = [v for _, v in history]
+    s = pd.Series(vals, index=idx).sort_index()
+    s.name = "korea_base_rate_official"
+    return s
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_korea_m2() -> pd.Series:
     """
-    한국 M2(광의통화, 월간, 원화 단위). 통계표코드 101Y003.
-    항목코드를 특정하지 않고 전체 세부항목을 받은 뒤, 'M2' 항목명과 정확히 일치하는
-    것을 우선 선택한다(세부 구성요소·말잔/평잔 등 하위분류와 섞이는 것을 방지).
-    ECOS는 주기(cycle)에 맞는 날짜 형식을 요구함 — 월간(M)은 YYYYMM(6자리).
-    ※ 배포 후 실제 값이 상식적 범위(한국 M2는 수천조 원 단위)인지 반드시 확인할 것.
+    한국 M2(광의통화, 말잔, 원계열, 월간, 십억원 단위).
+    ECOS(ecos.bok.or.kr) 대신, 같은 원천데이터를 재공개하는 KOSIS를 통해 조회
+    (ECOS는 Streamlit Cloud에서 네트워크 단 접속 차단, KOSIS는 정상 접속됨).
+    tblId=DT_101Y002(한국은행, 통화금융통계), itmId=13103134509999+ 은
+    KOSIS 화면에서 'M2(말잔, 원계열)' 항목을 직접 선택해 OPENAPI URL 생성으로
+    확인한 정확한 코드(추측 아님).
     """
-    return get_ecos_series(
-        stat_code="101Y003", cycle="M", item_code="",
-        start="199001", end="203012", item_keyword="M2",
+    url = (
+        "https://kosis.kr/openapi/Param/statisticsParameterData.do"
+        f"?method=getList&apiKey={KOSIS_API_KEY}"
+        "&itmId=13103134509999%2B&objL1=ALL&objL2=&objL3=&objL4=&objL5=&objL6=&objL7=&objL8="
+        "&format=json&jsonVD=Y&prdSe=M&startPrdDe=199001&endPrdDe=203012"
+        "&orgId=301&tblId=DT_101Y002"
     )
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(url, timeout=30, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and "err" in data:
+        raise ValueError(f"KOSIS 조회 실패(한국 M2): {data.get('errMsg', data['err'])}")
+    df = pd.DataFrame(data)
+    if df.empty:
+        raise ValueError("한국 M2 조회 결과가 비어 있습니다.")
+
+    def _parse_prd(t: str) -> pd.Timestamp:
+        t = str(t)
+        if len(t) == 6:
+            return pd.Timestamp(f"{t[:4]}-{t[4:]}-01")
+        return pd.to_datetime(t)
+
+    s = pd.Series(
+        pd.to_numeric(df["DT"], errors="coerce").values,
+        index=df["PRD_DE"].map(_parse_prd),
+    ).dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s.name = "korea_m2"
+    return s
 
 
 # ──────────────────────────────────────────────────────────
@@ -987,10 +1059,11 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
-    elif source == "ecos_m2":
+    elif source == "kosis_m2":
         s = get_korea_m2()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
+
 
     elif source == "kosis_per":
         s = get_kospi_per()
