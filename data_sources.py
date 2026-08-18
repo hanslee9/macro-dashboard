@@ -761,6 +761,12 @@ def get_korea_base_rate() -> pd.Series:
     idx = pd.to_datetime([d for d, _ in history])
     vals = [v for _, v in history]
     s = pd.Series(vals, index=idx).sort_index()
+
+    # 변경 시점만 듬성듬성 있으면 선그래프가 사선으로 그려져 계단식처럼 안 보임.
+    # 미국 지표(DFEDTAR 등)는 FRED 원본이 이미 '매일 값이 반복'되는 일간 데이터라
+    # 자연스럽게 계단식으로 보이는 것과 동일하게, 여기서도 일간으로 forward-fill.
+    daily_idx = pd.date_range(start=s.index.min(), end=pd.Timestamp.today(), freq="D")
+    s = s.reindex(daily_idx).ffill()
     s.name = "korea_base_rate_official"
     return s
 
