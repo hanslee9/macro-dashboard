@@ -725,9 +725,13 @@ def get_korea_m2() -> pd.Series:
     한국 M2(광의통화, 월간, 원화 단위). 통계표코드 101Y003.
     항목코드를 특정하지 않고 전체 세부항목을 받은 뒤, 'M2' 항목명과 정확히 일치하는
     것을 우선 선택한다(세부 구성요소·말잔/평잔 등 하위분류와 섞이는 것을 방지).
+    ECOS는 주기(cycle)에 맞는 날짜 형식을 요구함 — 월간(M)은 YYYYMM(6자리).
     ※ 배포 후 실제 값이 상식적 범위(한국 M2는 수천조 원 단위)인지 반드시 확인할 것.
     """
-    return get_ecos_series(stat_code="101Y003", cycle="M", item_code="", item_keyword="M2")
+    return get_ecos_series(
+        stat_code="101Y003", cycle="M", item_code="",
+        start="199001", end="203012", item_keyword="M2",
+    )
 
 
 # ──────────────────────────────────────────────────────────
