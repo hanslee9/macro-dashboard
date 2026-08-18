@@ -36,13 +36,6 @@ KOSIS_API_KEY = st.secrets["KOSIS_API_KEY"]
 INDICATORS = {
 
     "한국 주요지표": {
-        "한국 CPI":               {"source": "fred", "code": "KORCPIALLMINMEI", "freq": "월간"},
-        "한국 명목GDP":           {"source": "fred", "code": "MKTGDPKRA646NWDB", "freq": "연간"},
-        "한국 기준금리":           {"source": "ecos_base_rate", "code": "base_rate", "freq": "일간"},  # ECOS 722Y001/0101000, 한국은행 공식 기준금리
-        "한국 M2 통화량":         {"source": "ecos_m2", "code": "m2", "freq": "월간"},  # ECOS 101Y003 (FRED판은 2017년 이후 정지되어 폐기)
-        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
-        "한국 무역수지":           {"source": "korea_trade_balance", "code": "trade", "freq": "분기"},  # FRED 수출-수입 자체계산
-        "한국 경상수지":           {"source": "fred", "code": "KORB6BLTT02STSAQ", "freq": "분기"},  # OECD, GDP대비 %
         "코스피지수":             {"source": "yfinance", "code": "^KS11", "freq": "일간"},
         "코스닥지수":             {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
         "코스피 시가총액":         {"source": "kosis_marketcap", "code": "market_cap", "freq": "월간"},  # KOSIS, 코스닥 제외(S&P500과 대응 개념)
@@ -51,6 +44,13 @@ INDICATORS = {
         "KOSPI 배당수익률(%)":   {"source": "kosis_dividend", "code": "dividend", "freq": "월간"},  # KOSIS tblId=DT_343_2010_S0032
         "코스피 추세이격률(%)":   {"source": "trend_deviation", "code": "코스피지수", "freq": "일간"},
         "코스피 월간수익률(%)":   {"source": "monthly_return", "code": "코스피지수", "freq": "월간"},
+        "한국 명목GDP":           {"source": "fred", "code": "MKTGDPKRA646NWDB", "freq": "연간"},
+        "한국 CPI":               {"source": "fred", "code": "KORCPIALLMINMEI", "freq": "월간"},
+        "한국 M2 통화량":         {"source": "ecos_m2", "code": "m2", "freq": "월간"},  # ECOS 101Y003 (FRED판은 2017년 이후 정지되어 폐기)
+        "한국 기준금리":           {"source": "ecos_base_rate", "code": "base_rate", "freq": "일간"},  # ECOS 722Y001/0101000, 한국은행 공식 기준금리
+        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
+        "한국 무역수지":           {"source": "korea_trade_balance", "code": "trade", "freq": "분기"},  # FRED 수출-수입 자체계산
+        "한국 경상수지":           {"source": "fred", "code": "KORB6BLTT02STSAQ", "freq": "분기"},  # OECD, GDP대비 %
     },
 
     "미국 거시지표": {
