@@ -779,7 +779,7 @@ def get_korea_m2() -> pd.Series:
         "https://kosis.kr/openapi/Param/statisticsParameterData.do"
         f"?method=getList&apiKey={KOSIS_API_KEY}"
         "&itmId=13103134509999%2B&objL1=ALL&objL2=&objL3=&objL4=&objL5=&objL6=&objL7=&objL8="
-        "&format=json&jsonVD=Y&prdSe=M&startPrdDe=199001&endPrdDe=203012"
+        "&format=json&jsonVD=Y&prdSe=M&startPrdDe=199001&endPrdDe=202612"
         "&orgId=301&tblId=DT_101Y002"
     )
     headers = {
@@ -789,7 +789,7 @@ def get_korea_m2() -> pd.Series:
         ),
         "Accept": "application/json, text/plain, */*",
     }
-    resp = requests.get(url, timeout=30, headers=headers)
+    resp = requests.get(url, timeout=45, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, dict) and "err" in data:
