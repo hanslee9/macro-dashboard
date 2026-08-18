@@ -10,4 +10,4 @@ requests
 scipy
 dbnomics
 pykrx
-setuptools
+setuptools<82
