@@ -416,7 +416,20 @@ def get_corporate_profit_margin() -> pd.Series:
     gdp.index = pd.to_datetime(gdp.index)
     gdp = gdp.dropna()
 
-    combined = pd.DataFrame({"cp": cp, "gdp": gdp}).dropna()
+    if cp.empty:
+        raise ValueError("기업이익(CP, FRED) 데이터가 비어 있습니다.")
+    if gdp.empty:
+        raise ValueError("명목GDP(FRED) 데이터가 비어 있습니다.")
+
+    # 둘 다 FRED·같은 분기 데이터라 위험은 낮지만, 예방 차원에서 분기말로 통일
+    cp_q = cp.resample("QE").last()
+    gdp_q = gdp.resample("QE").last()
+    combined = pd.DataFrame({"cp": cp_q, "gdp": gdp_q}).dropna()
+    if combined.empty:
+        raise ValueError(
+            f"기업이익({cp.index.min()}~{cp.index.max()})과 "
+            f"GDP({gdp.index.min()}~{gdp.index.max()}) 데이터의 날짜가 겹치지 않습니다."
+        )
     margin = (combined["cp"] / combined["gdp"]) * 100
     margin.name = "us_corporate_profit_margin_pct"
     return margin
