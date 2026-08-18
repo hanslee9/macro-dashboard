@@ -352,7 +352,10 @@ def get_roe_proxy() -> pd.Series:
         raise ValueError("PBR(multpl) 데이터가 비어 있습니다.")
     if per.empty:
         raise ValueError("PER(multpl) 데이터가 비어 있습니다.")
-    combined = pd.DataFrame({"pbr": pbr, "per": per}).dropna()
+    # 배당성향과 동일한 이유(페이지별 날짜 표기 방식 차이)로 월말 리샘플링 후 결합.
+    pbr_m = pbr.resample("ME").last()
+    per_m = per.resample("ME").last()
+    combined = pd.DataFrame({"pbr": pbr_m, "per": per_m}).dropna()
     if combined.empty:
         raise ValueError(
             f"PBR({pbr.index.min()}~{pbr.index.max()})과 "
@@ -377,7 +380,12 @@ def get_payout_ratio() -> pd.Series:
         raise ValueError("배당수익률(multpl) 데이터가 비어 있습니다.")
     if per.empty:
         raise ValueError("PER(multpl) 데이터가 비어 있습니다.")
-    combined = pd.DataFrame({"dy": div_yield, "per": per}).dropna()
+    # multpl.com 페이지마다 날짜 표기 방식이 다를 수 있어(예: 배당수익률표는 월말일,
+    # PER표는 월초일) 정확한 날짜값이 하나도 안 겹치는 문제가 있었음. 둘 다 '월말'로
+    # 리샘플링해서 통일한 뒤 결합.
+    dy_m = div_yield.resample("ME").last()
+    per_m = per.resample("ME").last()
+    combined = pd.DataFrame({"dy": dy_m, "per": per_m}).dropna()
     if combined.empty:
         raise ValueError(
             f"배당수익률({div_yield.index.min()}~{div_yield.index.max()})과 "
@@ -947,7 +955,20 @@ def get_korea_trade_balance() -> pd.Series:
     imports = fred.get_series("XTIMVA01KRQ667S", observation_start="1990-01-01")
     exports.index = pd.to_datetime(exports.index)
     imports.index = pd.to_datetime(imports.index)
-    combined = pd.DataFrame({"exports": exports, "imports": imports}).dropna()
+    if exports.empty:
+        raise ValueError("한국 수출(FRED) 데이터가 비어 있습니다.")
+    if imports.empty:
+        raise ValueError("한국 수입(FRED) 데이터가 비어 있습니다.")
+    # 배당성향/ROE 때와 같은 이유(두 시리즈의 날짜 표기 방식이 다를 위험)로,
+    # 분기말 기준으로 리샘플링해 통일한 뒤 결합(예방 차원의 안전장치).
+    exports_q = exports.resample("QE").last()
+    imports_q = imports.resample("QE").last()
+    combined = pd.DataFrame({"exports": exports_q, "imports": imports_q}).dropna()
+    if combined.empty:
+        raise ValueError(
+            f"수출({exports.index.min()}~{exports.index.max()})과 "
+            f"수입({imports.index.min()}~{imports.index.max()}) 데이터의 날짜가 겹치지 않습니다."
+        )
     balance = combined["exports"] - combined["imports"]
     balance.name = "korea_trade_balance"
     return balance.dropna()
