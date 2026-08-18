@@ -256,7 +256,7 @@ def main():
     MAX_SELECT = 4
 
     # 체크박스 위젯 상태 초기화(최초 1회, 기본값 나스닥100+하이일드스프레드)
-    DEFAULT_SELECTED = {"나스닥100", "하이일드 스프레드(HY OAS, CDS프록시)"}
+    DEFAULT_SELECTED = {"S&P500"}
     for name in all_names_with_custom:
         key = f"chk_{name}"
         if key not in st.session_state:
