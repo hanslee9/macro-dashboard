@@ -96,7 +96,6 @@ INDICATORS = {
         "니케이225(일본)":        {"source": "yfinance", "code": "^N225", "freq": "일간"},
         "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
         "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
-        "CBOE 풋/콜비율(주식)":   {"source": "cboe_putcall", "code": "equity", "freq": "일간"},
     },
 
     "신용·부채": {
@@ -287,6 +286,24 @@ def get_multpl_series(mode: str) -> pd.Series:
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_sp500_master_series() -> pd.Series:
+    """
+    S&P500(^GSPC) 전용 마스터 캐시. 항상 동일한 넓은 시작일(1970-01-01)로 딱 한 번만
+    yf.download를 호출해두고, 이후 어디서 어떤 기간을 요청하든 이 결과를 슬라이싱해서
+    재사용한다. fetch_by_source(source="yfinance", code="^GSPC", ...)를 통해 호출됨.
+    """
+    df = yf.download("^GSPC", start="1970-01-01", progress=False)
+    if df.empty:
+        return pd.Series(dtype=float)
+    s = df["Close"]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0]
+    s = s.dropna()
+    s.name = "^GSPC"
+    return s
+
+
 def get_peg_ratio() -> pd.Series:
     """
     S&P500 PEG비율(트레일링 근사치) = 일반PER ÷ (최근 12개월 EPS 전년동월대비 성장률, %)
@@ -298,12 +315,12 @@ def get_peg_ratio() -> pd.Series:
     한계가 있으니 화면에 caveat로 안내할 것.
     """
     pe = get_multpl_series(mode="pe")  # 월별, S&P500 가격 ÷ EPS
-    price_df = yf.download("^GSPC", start="1990-01-01", progress=False)
-    if price_df.empty:
+
+    # ^GSPC 전용 마스터 캐시를 직접 재사용(중복 Yahoo Finance 호출 방지, 상세 사유는
+    # _get_sp500_master_series 및 fetch_by_source의 yfinance 분기 주석 참고)
+    price = _get_sp500_master_series()
+    if price.empty:
         raise ValueError("PEG 계산을 위한 S&P500 가격 데이터를 가져오지 못했습니다.")
-    price = price_df["Close"]
-    if isinstance(price, pd.DataFrame):
-        price = price.iloc[:, 0]
     price.index = pd.to_datetime(price.index)
 
     pe_m = pe.resample("ME").last()
@@ -331,7 +348,16 @@ def get_roe_proxy() -> pd.Series:
     """
     pbr = get_multpl_series(mode="price_to_book")
     per = get_multpl_series(mode="pe")
+    if pbr.empty:
+        raise ValueError("PBR(multpl) 데이터가 비어 있습니다.")
+    if per.empty:
+        raise ValueError("PER(multpl) 데이터가 비어 있습니다.")
     combined = pd.DataFrame({"pbr": pbr, "per": per}).dropna()
+    if combined.empty:
+        raise ValueError(
+            f"PBR({pbr.index.min()}~{pbr.index.max()})과 "
+            f"PER({per.index.min()}~{per.index.max()}) 데이터의 날짜가 겹치지 않습니다."
+        )
     roe = (combined["pbr"] / combined["per"]) * 100
     roe.name = "sp500_roe_pct"
     return roe
@@ -347,7 +373,16 @@ def get_payout_ratio() -> pd.Series:
     """
     div_yield = get_multpl_series(mode="dividend_yield")
     per = get_multpl_series(mode="pe")
+    if div_yield.empty:
+        raise ValueError("배당수익률(multpl) 데이터가 비어 있습니다.")
+    if per.empty:
+        raise ValueError("PER(multpl) 데이터가 비어 있습니다.")
     combined = pd.DataFrame({"dy": div_yield, "per": per}).dropna()
+    if combined.empty:
+        raise ValueError(
+            f"배당수익률({div_yield.index.min()}~{div_yield.index.max()})과 "
+            f"PER({per.index.min()}~{per.index.max()}) 데이터의 날짜가 겹치지 않습니다."
+        )
     payout = (combined["dy"] / 100) * combined["per"] * 100  # dividend_yield는 %단위이므로 100으로 나눈 뒤 다시 %로
     payout.name = "sp500_payout_ratio_pct"
     return payout
@@ -376,51 +411,6 @@ def get_corporate_profit_margin() -> pd.Series:
     return margin
 
 
-
-# ──────────────────────────────────────────────────────────
-# CBOE 풋/콜비율 (공개 CSV, 인증 불필요, 일간)
-# ──────────────────────────────────────────────────────────
-CBOE_PUTCALL_URLS = {
-    "equity": "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypc.csv",
-    "index":  "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/indexpcarchive.csv",
-}
-
-
-@st.cache_data(ttl=6 * 3600, show_spinner=False)
-def get_putcall_ratio(kind: str = "equity") -> pd.Series:
-    """
-    CBOE 풋/콜비율(P/C Ratio) 일간 시계열 반환.
-    kind="equity": 개별주 옵션 기준 (일반적으로 더 널리 참고됨)
-    kind="index":  지수 옵션 기준
-    """
-    url = CBOE_PUTCALL_URLS[kind]
-    resp = requests.get(url, timeout=20)
-    resp.raise_for_status()
-
-    # CBOE CSV는 상단에 안내문구 몇 줄이 섞여 있어 헤더 행을 자동 탐색
-    raw = pd.read_csv(io.StringIO(resp.text), header=None, on_bad_lines="skip")
-    header_row_idx = None
-    for i, row in raw.iterrows():
-        if row.astype(str).str.contains("P/C Ratio|Trade_date", case=False, na=False, regex=True).any():
-            header_row_idx = i
-            break
-    if header_row_idx is None:
-        raise ValueError("CBOE CSV에서 헤더 행을 찾지 못했습니다.")
-
-    df = pd.read_csv(io.StringIO(resp.text), header=header_row_idx, on_bad_lines="skip")
-    df.columns = [str(c).strip() for c in df.columns]
-
-    date_col = next(c for c in df.columns if "date" in c.lower())
-    ratio_col = next(c for c in df.columns if "ratio" in c.lower())
-
-    dates = pd.to_datetime(df[date_col], errors="coerce")
-    s = pd.Series(
-        pd.to_numeric(df[ratio_col], errors="coerce").values,
-        index=dates,
-    ).dropna()
-    s = s[s.index.notna()].sort_index()
-    s.name = f"CBOE_PC_ratio_{kind}"
-    return s
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
@@ -977,6 +967,16 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
         return s.dropna()
 
     elif source == "yfinance":
+        if code == "^GSPC":
+            # S&P500(^GSPC)은 일반 지표 선택뿐 아니라 PEG·추세이격률·월간수익률 등
+            # 여러 파생 계산에서도 내부적으로 재사용됨. 호출부마다 다른 start(사용자가
+            # 화면에서 고른 기간 vs 파생계산용 고정 시작일 등)를 쓰면 캐시 키가 달라져
+            # 같은 종목에 대해 Yahoo Finance로 중복 요청이 나가고, 이게 겹치면 Yahoo가
+            # 일시적으로 응답을 거부/지연시키는 문제가 있었다. 그래서 ^GSPC만 별도로
+            # '넓게 한 번 받아서 캐싱해두고, 필요한 구간만 슬라이싱'하는 방식으로 처리해
+            # 실제 yf.download 호출 자체를 항상 1번으로 고정한다.
+            s = _get_sp500_master_series()
+            return s[s.index >= pd.to_datetime(start)].dropna()
         df = yf.download(code, start=start, progress=False)
         if df.empty:
             return pd.Series(dtype=float)
@@ -987,11 +987,6 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
 
     elif source == "finra_margin":
         s = get_margin_debt(mode=code)  # code: "level" | "yoy"
-        s = s[s.index >= pd.to_datetime(start)]
-        return s.dropna()
-
-    elif source == "cboe_putcall":
-        s = get_putcall_ratio(kind=code)  # code: "equity" | "index"
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
