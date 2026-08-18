@@ -641,9 +641,36 @@ def get_dbnomics_series(series_id: str, start: str = "2015-01-01") -> pd.Series:
 # 통계표코드·항목코드는 ECOS 사이트(ecos.bok.or.kr) 통계검색에서 확인.
 # URL 형식: /StatisticSearch/{키}/json/kr/1/{건수}/{통계표코드}/{주기}/{시작}/{종료}/{항목코드}
 # ──────────────────────────────────────────────────────────
+def _select_primary_item(df: pd.DataFrame, item_col: str, keyword: str) -> pd.DataFrame:
+    """
+    한 표 안에 여러 세부항목(코스피 vs 코스피200 vs 업종별, 또는 ECOS의 세부 분류 등)이
+    섞여 있을 때, '전체'에 해당하는 항목을 원칙에 따라 선택한다. 우선순위:
+      1) 항목명이 keyword와 정확히 일치 (예: '코스피')
+      2) 항목명에 숫자가 포함되지 않은 항목만 남김(코스피200, 코스피100 같은 하위지수 배제)
+         — 그 결과가 항목 1개로 좁혀지면 채택
+      3) 위 두 방식으로도 못 좁히면, 데이터가 가장 촘촘한 항목을 임시 대체값으로 사용
+         (실제 응답 구조를 사람이 직접 확인해 정확한 항목코드를 고정하는 것을 권장)
+    """
+    if item_col is None or df[item_col].nunique() <= 1:
+        return df
+
+    exact = df[df[item_col].astype(str) == keyword]
+    if not exact.empty:
+        return exact
+
+    no_digit = df[~df[item_col].astype(str).str.contains(r"\d", regex=True)]
+    if not no_digit.empty and no_digit[item_col].nunique() == 1:
+        return no_digit
+
+    # 마지막 수단: 데이터가 가장 촘촘한 항목(정확한 항목명 확인 전까지의 임시 대체)
+    best_item = df.groupby(item_col).size().idxmax()
+    return df[df[item_col] == best_item]
+
+
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
-                     start: str = "19900101", end: str = "20301231") -> pd.Series:
+                     start: str = "19900101", end: str = "20301231",
+                     item_keyword: str | None = None) -> pd.Series:
     url = (
         f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_API_KEY}/json/kr/1/10000/"
         f"{stat_code}/{cycle}/{start}/{end}/{item_code}"
@@ -658,6 +685,12 @@ def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
 
     rows = data["StatisticSearch"]["row"]
     df = pd.DataFrame(rows)
+
+    # item_code를 명시적으로 지정하지 않았거나(예: 하위 세부항목이 여러 개인 통계표),
+    # ECOS가 항목을 넓게 묶어 여러 ITEM_NAME1이 섞여 돌아올 수 있음.
+    # KOSIS와 동일한 원칙(정확한 이름 우선 → 숫자 없는 항목만 좁히기)으로 하나만 선택.
+    if "ITEM_NAME1" in df.columns and df["ITEM_NAME1"].nunique() > 1:
+        df = _select_primary_item(df, "ITEM_NAME1", item_keyword or "")
 
     def _parse_time(t: str) -> pd.Timestamp:
         t = str(t)
@@ -682,18 +715,19 @@ def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_korea_base_rate() -> pd.Series:
-    """한국은행 기준금리(%, 일간). 통계표코드 722Y001, 항목코드 0101000."""
+    """한국은행 기준금리(%, 일간). 통계표코드 722Y001, 항목코드 0101000(다수 독립 소스에서 확인됨)."""
     return get_ecos_series(stat_code="722Y001", cycle="D", item_code="0101000")
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_korea_m2() -> pd.Series:
-    """한국 M2(광의통화, 평잔, 월간, 원화 단위). 통계표코드 101Y003."""
-    s = get_ecos_series(stat_code="101Y003", cycle="M", item_code="BBHS00")
-    if s.empty:
-        # 항목코드가 다를 경우를 대비한 폴백: 첫 번째 항목 자동조회
-        s = get_ecos_series(stat_code="101Y003", cycle="M", item_code="")
-    return s
+    """
+    한국 M2(광의통화, 월간, 원화 단위). 통계표코드 101Y003.
+    항목코드를 특정하지 않고 전체 세부항목을 받은 뒤, 'M2' 항목명과 정확히 일치하는
+    것을 우선 선택한다(세부 구성요소·말잔/평잔 등 하위분류와 섞이는 것을 방지).
+    ※ 배포 후 실제 값이 상식적 범위(한국 M2는 수천조 원 단위)인지 반드시 확인할 것.
+    """
+    return get_ecos_series(stat_code="101Y003", cycle="M", item_code="", item_keyword="M2")
 
 
 # ──────────────────────────────────────────────────────────
@@ -702,7 +736,8 @@ def get_korea_m2() -> pd.Series:
 # ──────────────────────────────────────────────────────────
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
 def get_kosis_series(tbl_id: str, org_id: str = "343",
-                      start: str = "199001", end: str = "203012") -> pd.Series:
+                      start: str = "199001", end: str = "203012",
+                      item_keyword: str = "코스피") -> pd.Series:
     url = (
         "https://kosis.kr/openapi/Param/statisticsParameterData.do"
         f"?method=getList&apiKey={KOSIS_API_KEY}&itmId=ALL&objL1=ALL"
@@ -719,6 +754,13 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
     df = pd.DataFrame(data)
     if df.empty:
         raise ValueError(f"KOSIS 조회 결과가 비어 있습니다(tblId={tbl_id}).")
+
+    # 이 표에는 시장구분·업종 등 여러 세부항목이 동시에 담겨 있을 수 있음.
+    # itmId=ALL로 요청하면 그 항목들이 한 응답에 섞여서 오는데, 이를 구분하지 않고
+    # 그대로 쓰면 날짜별로 서로 다른 항목이 뒤섞여 값이 튀는 문제가 생김
+    # (예: 코스피 PER이 특정 구간에서만 갑자기 200~500대로 치솟는 오류).
+    item_col = "ITM_ID" if "ITM_ID" in df.columns else ("ITM_NM" if "ITM_NM" in df.columns else None)
+    df = _select_primary_item(df, item_col, item_keyword)
 
     def _parse_prd(t: str) -> pd.Timestamp:
         t = str(t)
@@ -782,6 +824,11 @@ def get_kospi_market_cap() -> pd.Series:
     # 항목명에 '시가총액'이 포함된 행만 필터링(정확한 itmId는 실제 응답 구조 확인 후 고정 권장)
     mask = df["ITM_NM"].astype(str).str.contains("시가총액", na=False)
     df = df[mask] if mask.any() else df
+
+    # '시가총액' 필터링 후에도 여러 세부항목(코스피 vs 코스피200 시가총액 등)이 섞여
+    # 있을 수 있으므로, 동일한 원칙(정확한 이름 우선)으로 하나만 선택
+    item_col = "ITM_ID" if "ITM_ID" in df.columns else ("ITM_NM" if "ITM_NM" in df.columns else None)
+    df = _select_primary_item(df, item_col, "코스피 시가총액")
 
     def _parse_prd(t: str) -> pd.Timestamp:
         t = str(t)
