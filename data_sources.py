@@ -675,7 +675,14 @@ def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
         f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_API_KEY}/json/kr/1/10000/"
         f"{stat_code}/{cycle}/{start}/{end}/{item_code}"
     )
-    resp = requests.get(url, timeout=15)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(url, timeout=30, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 
@@ -748,7 +755,14 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
         f"&format=json&jsonVD=Y&prdSe=M&startPrdDe={start}&endPrdDe={end}"
         f"&orgId={org_id}&tblId={tbl_id}"
     )
-    resp = requests.get(url, timeout=15)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(url, timeout=30, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 
@@ -816,7 +830,14 @@ def get_kospi_market_cap() -> pd.Series:
         f"&format=json&jsonVD=Y&prdSe=M&startPrdDe=199001&endPrdDe=203012"
         f"&orgId=343&tblId={tbl_id}"
     )
-    resp = requests.get(url, timeout=15)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(url, timeout=30, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, dict) and "err" in data:
