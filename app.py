@@ -363,14 +363,20 @@ def main():
     left_domain = 0.11 if n >= 3 else 0.06     # 왼쪽 보조축 있으면 여백 더 필요
     right_domain = 0.80 if n >= 3 else 0.86    # 오른쪽 보조축 있으면 여백 더 필요
 
+    # 정책금리처럼 '변경 시점에만 값이 바뀌고 그 사이는 완전히 동일하게 유지'되는
+    # 지표는 일반 선그래프(직선 보간)로 그리면 두 시점 사이가 서서히 변하는 것처럼
+    # 보여 실제와 다르다. 이런 지표는 plotly의 계단식 렌더링(line_shape='hv')을 적용.
+    STEP_INDICATORS = {"한국 기준금리", "미국 기준금리(목표, 계단식)"}
+
     if normalize_opt:
         # 정규화 모드: 모든 지표를 동일 스케일(시작점=100)로 단일 축 비교
         normalized = {name: normalize(series_dict[name]) for name in names}
         for i, name in enumerate(names):
             color = COLORS[i % len(COLORS)]
+            shape = "hv" if name in STEP_INDICATORS else "linear"
             fig.add_trace(go.Scatter(
                 x=normalized[name].index, y=normalized[name],
-                mode="lines", name=name, line=dict(color=color, width=1.3),
+                mode="lines", name=name, line=dict(color=color, width=1.3, shape=shape),
             ))
         yaxis_conf = dict(
             title=dict(text="정규화 지수 (시작점=100)", font=dict(size=15)),
@@ -411,9 +417,10 @@ def main():
             color = COLORS[i % len(COLORS)]
             yref = trace_yref[i] if i < 4 else trace_yref[3]
 
+            shape = "hv" if name in STEP_INDICATORS else "linear"
             fig.add_trace(go.Scatter(
                 x=series_dict[name].index, y=series_dict[name],
-                mode="lines", name=name, line=dict(color=color, width=1.3), yaxis=yref,
+                mode="lines", name=name, line=dict(color=color, width=1.3, shape=shape), yaxis=yref,
             ))
 
             axis_conf = dict(
