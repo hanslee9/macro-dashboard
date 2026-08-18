@@ -198,7 +198,7 @@ def main():
     grouped = list_indicator_names()
 
     # 화면 표시 순서: 지수·주가를 맨 앞으로
-    CATEGORY_ORDER = ["지수·주가", "미국 거시지표", "금리·통화", "신용·부채", "외환·무역", "원자재", "밸류에이션 배수", "복합·추세지표"]
+    CATEGORY_ORDER = ["지수·주가", "미국 거시지표", "한국 주요지표", "금리·통화", "신용·부채", "외환·무역", "원자재", "밸류에이션 배수", "복합·추세지표"]
     ordered_categories = [c for c in CATEGORY_ORDER if c in grouped] + [c for c in grouped if c not in CATEGORY_ORDER]
 
     all_names = [name for cat in ordered_categories for name in grouped[cat]]
@@ -274,6 +274,7 @@ def main():
         "WTI 원유", "금 선물",
         "S&P500 PER(일반)", "S&P500 CAPE(실러PER)", "S&P500 PBR(주가순자산)",
         "버핏지수(시총/GDP, %)", "S&P500 추세이격률(%)",
+        "한국 CPI", "한국 기준금리", "코스피지수",
     }
 
     st.markdown("**비교할 지표를 선택하세요 (최대 4개, 이미 선택된 것은 다시 눌러 해제 / 굵게 표시된 지표는 주가 관련성이 높아 우선 참고할 만한 지표입니다)**")

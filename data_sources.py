@@ -23,16 +23,41 @@ from dbnomics import fetch_series as _dbnomics_fetch_series
 fred = Fred(api_key=st.secrets["FRED_API_KEY"])
 
 # ──────────────────────────────────────────────────────────
+# ECOS(한국은행) / KOSIS(국가통계포털) API 키
+# ──────────────────────────────────────────────────────────
+ECOS_API_KEY = st.secrets["ECOS_API_KEY"]
+KOSIS_API_KEY = st.secrets["KOSIS_API_KEY"]
+
+# ──────────────────────────────────────────────────────────
 # 지표 정의: 카테고리별로 그룹핑 (UI 셀렉트박스에서 그대로 사용)
 # source: "fred" | "yfinance"
 # freq: 원본 발표 주기 (참고용 표시)
 # ──────────────────────────────────────────────────────────
 INDICATORS = {
 
+    "한국 주요지표": {
+        "한국 CPI":               {"source": "fred", "code": "KORCPIALLMINMEI", "freq": "월간"},
+        "한국 명목GDP":           {"source": "fred", "code": "MKTGDPKRA646NWDB", "freq": "연간"},
+        "한국 기준금리":           {"source": "ecos_base_rate", "code": "base_rate", "freq": "일간"},  # ECOS 722Y001/0101000, 한국은행 공식 기준금리
+        "한국 M2 통화량":         {"source": "ecos_m2", "code": "m2", "freq": "월간"},  # ECOS 101Y003 (FRED판은 2017년 이후 정지되어 폐기)
+        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
+        "한국 무역수지":           {"source": "korea_trade_balance", "code": "trade", "freq": "분기"},  # FRED 수출-수입 자체계산
+        "한국 경상수지":           {"source": "fred", "code": "KORB6BLTT02STSAQ", "freq": "분기"},  # OECD, GDP대비 %
+        "코스피지수":             {"source": "yfinance", "code": "^KS11", "freq": "일간"},
+        "코스닥지수":             {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
+        "코스피 시가총액":         {"source": "kosis_marketcap", "code": "market_cap", "freq": "월간"},  # KOSIS, 코스닥 제외(S&P500과 대응 개념)
+        "KOSPI PER(일반)":       {"source": "kosis_per", "code": "per", "freq": "월간"},  # KOSIS tblId=DT_343_2010_S0033
+        "KOSPI PBR":             {"source": "kosis_pbr", "code": "pbr", "freq": "월간"},  # KOSIS tblId=DT_343_2010_S0034
+        "KOSPI 배당수익률(%)":   {"source": "kosis_dividend", "code": "dividend", "freq": "월간"},  # KOSIS tblId=DT_343_2010_S0032
+        "코스피 추세이격률(%)":   {"source": "trend_deviation", "code": "코스피지수", "freq": "일간"},
+        "코스피 월간수익률(%)":   {"source": "monthly_return", "code": "코스피지수", "freq": "월간"},
+    },
+
     "미국 거시지표": {
-        "비농업고용자수":         {"source": "fred", "code": "PAYEMS", "freq": "월간"},
+        "미국 명목GDP":           {"source": "fred", "code": "GDP", "freq": "분기"},
         "미국 CPI":               {"source": "fred", "code": "CPIAUCSL", "freq": "월간"},
         "미국 실업률":            {"source": "fred", "code": "UNRATE", "freq": "월간"},
+        "비농업고용자수":         {"source": "fred", "code": "PAYEMS", "freq": "월간"},
         "ISM 제조업 PMI":         {"source": "dbnomics", "code": "ISM/pmi/pm", "freq": "월간"},  # 무료 대안소스(DBnomics), 데이터 정합성 검증 필요
         "신규 실업급여 신청 건수":  {"source": "fred", "code": "ICSA", "freq": "주간"},
         "미국 실질GDP성장률":     {"source": "fred", "code": "A191RL1Q225SBEA", "freq": "분기"},
@@ -46,7 +71,6 @@ INDICATORS = {
         "개인소득":                {"source": "fred", "code": "PI", "freq": "월간"},
         "내구재 수주":             {"source": "fred", "code": "DGORDER", "freq": "월간"},
         "신규 주택허가 건수":       {"source": "fred", "code": "PERMIT", "freq": "월간"},
-        "미국 명목GDP":           {"source": "fred", "code": "GDP", "freq": "분기"},
         "중장비트럭 판매량(선행지표)": {"source": "fred", "code": "HTRUCKSSAAR", "freq": "월간"},
         "미국 경기침체확률(Chauvet-Piger)": {"source": "fred", "code": "RECPROUSM156N", "freq": "월간"},
     },
@@ -62,19 +86,16 @@ INDICATORS = {
         "미국 30년 모기지금리":   {"source": "fred", "code": "MORTGAGE30US", "freq": "주간"},
         "미국 3개월 국채금리":     {"source": "fred", "code": "DGS3MO", "freq": "일간"},
         "미국 2년 국채금리":       {"source": "fred", "code": "DGS2", "freq": "일간"},
-        "원/달러 환율":           {"source": "fred", "code": "DEXKOUS", "freq": "일간"},
         "엔/달러 환율":           {"source": "fred", "code": "DEXJPUS", "freq": "일간"},
     },
 
     "지수·주가": {
         "S&P500":                {"source": "yfinance", "code": "^GSPC", "freq": "일간"},
         "나스닥100":              {"source": "yfinance", "code": "^NDX", "freq": "일간"},
-        "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
         "다우존스":                {"source": "yfinance", "code": "^DJI", "freq": "일간"},
-        "코스피":                 {"source": "yfinance", "code": "^KS11", "freq": "일간"},
-        "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
-        "코스닥":                 {"source": "yfinance", "code": "^KQ11", "freq": "일간"},
         "니케이225(일본)":        {"source": "yfinance", "code": "^N225", "freq": "일간"},
+        "미국 전체 시가총액(조달러)": {"source": "us_market_cap", "code": "market_cap", "freq": "분기"},  # 연준 Z.1 공식 집계, 버핏지수 분자와 동일 원본
+        "VIX(변동성지수)":        {"source": "fred", "code": "VIXCLS", "freq": "일간"},
         "CBOE 풋/콜비율(주식)":   {"source": "cboe_putcall", "code": "equity", "freq": "일간"},
     },
 
@@ -118,10 +139,8 @@ INDICATORS = {
         "버핏지수 추세이격률(%)": {"source": "buffett_deviation", "code": "pct", "freq": "분기"},
         "S&P500 CAPE 추세이격률(%)": {"source": "trend_deviation", "code": "S&P500 CAPE(실러PER)", "freq": "월간"},
         "나스닥100 추세이격률(%)":   {"source": "trend_deviation", "code": "나스닥100", "freq": "일간"},
-        "코스피 추세이격률(%)":      {"source": "trend_deviation", "code": "코스피", "freq": "일간"},
         "S&P500 월간수익률(%)":      {"source": "monthly_return", "code": "S&P500", "freq": "월간"},
         "나스닥100 월간수익률(%)":    {"source": "monthly_return", "code": "나스닥100", "freq": "월간"},
-        "코스피 월간수익률(%)":       {"source": "monthly_return", "code": "코스피", "freq": "월간"},
     },
 }
 
@@ -334,7 +353,7 @@ def get_payout_ratio() -> pd.Series:
     return payout
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False)
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
 def get_corporate_profit_margin() -> pd.Series:
     """
     미국 기업이익률(GDP대비, %) = 기업이익(CP, FRED) ÷ 명목GDP(FRED) × 100
@@ -617,6 +636,181 @@ def get_dbnomics_series(series_id: str, start: str = "2015-01-01") -> pd.Series:
     return s[s.index >= pd.to_datetime(start)].dropna()
 
 
+# ──────────────────────────────────────────────────────────
+# ECOS(한국은행 경제통계시스템) 범용 조회 함수
+# 통계표코드·항목코드는 ECOS 사이트(ecos.bok.or.kr) 통계검색에서 확인.
+# URL 형식: /StatisticSearch/{키}/json/kr/1/{건수}/{통계표코드}/{주기}/{시작}/{종료}/{항목코드}
+# ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_ecos_series(stat_code: str, cycle: str, item_code: str = "",
+                     start: str = "19900101", end: str = "20301231") -> pd.Series:
+    url = (
+        f"https://ecos.bok.or.kr/api/StatisticSearch/{ECOS_API_KEY}/json/kr/1/10000/"
+        f"{stat_code}/{cycle}/{start}/{end}/{item_code}"
+    )
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if "StatisticSearch" not in data:
+        err = data.get("RESULT", {}).get("MESSAGE", "알 수 없는 오류")
+        raise ValueError(f"ECOS 조회 실패(stat_code={stat_code}): {err}")
+
+    rows = data["StatisticSearch"]["row"]
+    df = pd.DataFrame(rows)
+
+    def _parse_time(t: str) -> pd.Timestamp:
+        t = str(t)
+        if len(t) == 4:        # 연간: YYYY
+            return pd.Timestamp(f"{t}-01-01")
+        if len(t) == 6:        # 월간: YYYYMM
+            return pd.Timestamp(f"{t[:4]}-{t[4:]}-01")
+        if len(t) == 5 and "Q" in t.upper():  # 분기: YYYYQ#
+            y, q = t[:4], t[-1]
+            month = {"1": 1, "2": 4, "3": 7, "4": 10}[q]
+            return pd.Timestamp(year=int(y), month=month, day=1)
+        return pd.to_datetime(t)
+
+    s = pd.Series(
+        pd.to_numeric(df["DATA_VALUE"], errors="coerce").values,
+        index=df["TIME"].map(_parse_time),
+    ).dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s.name = f"ecos_{stat_code}_{item_code}"
+    return s
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_korea_base_rate() -> pd.Series:
+    """한국은행 기준금리(%, 일간). 통계표코드 722Y001, 항목코드 0101000."""
+    return get_ecos_series(stat_code="722Y001", cycle="D", item_code="0101000")
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_korea_m2() -> pd.Series:
+    """한국 M2(광의통화, 평잔, 월간, 원화 단위). 통계표코드 101Y003."""
+    s = get_ecos_series(stat_code="101Y003", cycle="M", item_code="BBHS00")
+    if s.empty:
+        # 항목코드가 다를 경우를 대비한 폴백: 첫 번째 항목 자동조회
+        s = get_ecos_series(stat_code="101Y003", cycle="M", item_code="")
+    return s
+
+
+# ──────────────────────────────────────────────────────────
+# KOSIS(국가통계포털) 범용 조회 함수
+# tblId는 KOSIS 통계표 화면(orgId=343, 한국거래소 통계)에서 확인.
+# ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_kosis_series(tbl_id: str, org_id: str = "343",
+                      start: str = "199001", end: str = "203012") -> pd.Series:
+    url = (
+        "https://kosis.kr/openapi/Param/statisticsParameterData.do"
+        f"?method=getList&apiKey={KOSIS_API_KEY}&itmId=ALL&objL1=ALL"
+        f"&format=json&jsonVD=Y&prdSe=M&startPrdDe={start}&endPrdDe={end}"
+        f"&orgId={org_id}&tblId={tbl_id}"
+    )
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if isinstance(data, dict) and "err" in data:
+        raise ValueError(f"KOSIS 조회 실패(tblId={tbl_id}): {data.get('errMsg', data['err'])}")
+
+    df = pd.DataFrame(data)
+    if df.empty:
+        raise ValueError(f"KOSIS 조회 결과가 비어 있습니다(tblId={tbl_id}).")
+
+    def _parse_prd(t: str) -> pd.Timestamp:
+        t = str(t)
+        if len(t) == 4:
+            return pd.Timestamp(f"{t}-01-01")
+        if len(t) == 6:
+            return pd.Timestamp(f"{t[:4]}-{t[4:]}-01")
+        return pd.to_datetime(t)
+
+    s = pd.Series(
+        pd.to_numeric(df["DT"], errors="coerce").values,
+        index=df["PRD_DE"].map(_parse_prd),
+    ).dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s.name = f"kosis_{tbl_id}"
+    return s
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_kospi_per() -> pd.Series:
+    """코스피 PER(일반). KOSIS tblId=DT_343_2010_S0033."""
+    return get_kosis_series(tbl_id="DT_343_2010_S0033")
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_kospi_pbr() -> pd.Series:
+    """코스피 PBR. KOSIS tblId=DT_343_2010_S0034."""
+    return get_kosis_series(tbl_id="DT_343_2010_S0034")
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_kospi_dividend_yield() -> pd.Series:
+    """코스피 배당수익률(%). KOSIS tblId=DT_343_2010_S0032."""
+    return get_kosis_series(tbl_id="DT_343_2010_S0032")
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_kospi_market_cap() -> pd.Series:
+    """
+    코스피 시가총액(코스닥 제외, S&P500과 대응되는 개념).
+    KOSIS 통계표(S0027 '코스피 지수' 또는 S0029 '코스피 주요주가지수') 내
+    시가총액 항목을 사용. 항목 구성은 KOSIS 응답의 실제 컬럼(itmId)을 확인해
+    맞는 항목만 필터링한다.
+    """
+    tbl_id = "DT_343_2010_S0029"
+    url = (
+        "https://kosis.kr/openapi/Param/statisticsParameterData.do"
+        f"?method=getList&apiKey={KOSIS_API_KEY}&itmId=ALL&objL1=ALL"
+        f"&format=json&jsonVD=Y&prdSe=M&startPrdDe=199001&endPrdDe=203012"
+        f"&orgId=343&tblId={tbl_id}"
+    )
+    resp = requests.get(url, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and "err" in data:
+        raise ValueError(f"KOSIS 조회 실패(tblId={tbl_id}): {data.get('errMsg', data['err'])}")
+    df = pd.DataFrame(data)
+    if df.empty:
+        raise ValueError("코스피 시가총액 조회 결과가 비어 있습니다.")
+
+    # 항목명에 '시가총액'이 포함된 행만 필터링(정확한 itmId는 실제 응답 구조 확인 후 고정 권장)
+    mask = df["ITM_NM"].astype(str).str.contains("시가총액", na=False)
+    df = df[mask] if mask.any() else df
+
+    def _parse_prd(t: str) -> pd.Timestamp:
+        t = str(t)
+        if len(t) == 6:
+            return pd.Timestamp(f"{t[:4]}-{t[4:]}-01")
+        return pd.to_datetime(t)
+
+    s = pd.Series(
+        pd.to_numeric(df["DT"], errors="coerce").values,
+        index=df["PRD_DE"].map(_parse_prd),
+    ).dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s.name = "kospi_market_cap"
+    return s
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def get_korea_trade_balance() -> pd.Series:
+    """한국 무역수지 = 수출 - 수입 (FRED, 분기, 자체계산)."""
+    exports = fred.get_series("XTEXVA01KRQ667N", observation_start="1990-01-01")
+    imports = fred.get_series("XTIMVA01KRQ667S", observation_start="1990-01-01")
+    exports.index = pd.to_datetime(exports.index)
+    imports.index = pd.to_datetime(imports.index)
+    combined = pd.DataFrame({"exports": exports, "imports": imports}).dropna()
+    balance = combined["exports"] - combined["imports"]
+    balance.name = "korea_trade_balance"
+    return balance.dropna()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Series:
     """
@@ -713,6 +907,41 @@ def fetch_by_source(source: str, code: str, start: str = "2015-01-01") -> pd.Ser
             s = get_corporate_profit_margin()
         else:
             raise ValueError(f"알 수 없는 fred_ratio code: {code}")
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "ecos_base_rate":
+        s = get_korea_base_rate()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "ecos_m2":
+        s = get_korea_m2()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "kosis_per":
+        s = get_kospi_per()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "kosis_pbr":
+        s = get_kospi_pbr()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "kosis_dividend":
+        s = get_kospi_dividend_yield()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "kosis_marketcap":
+        s = get_kospi_market_cap()
+        s = s[s.index >= pd.to_datetime(start)]
+        return s.dropna()
+
+    elif source == "korea_trade_balance":
+        s = get_korea_trade_balance()
         s = s[s.index >= pd.to_datetime(start)]
         return s.dropna()
 
