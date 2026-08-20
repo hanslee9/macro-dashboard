@@ -865,7 +865,11 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
         ),
         "Accept": "application/json, text/plain, */*",
     }
-    resp = requests.get(url, timeout=30, headers=headers)
+    # 접속 자체가 차단된 환경(예: Streamlit Community Cloud 해외 IP)에서는 응답이
+    # 오지 않고 계속 대기(hang)할 수 있어, 짧은 타임아웃(8초)으로 빠르게 실패시켜
+    # 호출부의 결측 처리 로직으로 자연스럽게 넘어가도록 한다(로컬 국내망에서는
+    # 정상 접속되는 것으로 확인됨 - 클라우드에서만 이 타임아웃이 발동함).
+    resp = requests.get(url, timeout=8, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 
@@ -880,7 +884,18 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
     # itmId=ALL로 요청하면 그 항목들이 한 응답에 섞여서 오는데, 이를 구분하지 않고
     # 그대로 쓰면 날짜별로 서로 다른 항목이 뒤섞여 값이 튀는 문제가 생김
     # (예: 코스피 PER이 특정 구간에서만 갑자기 200~500대로 치솟는 오류).
-    item_col = "ITM_ID" if "ITM_ID" in df.columns else ("ITM_NM" if "ITM_NM" in df.columns else None)
+    # 2026-08-19 진단 결과: PER/PBR/배당수익률 표(tblId=S0032~S0034)에서 실제
+    # 세부항목(KOSPI/KOSPI 200/제조업/대형주 등) 구분은 ITM_ID·ITM_NM이 아니라
+    # C1_NM 컬럼에 들어있음(ITM_NM은 표 전체에서 값이 1개뿐이라 무의미).
+    # C1_NM을 최우선으로 사용하고, 없는 표에서는 기존 방식(ITM_ID/ITM_NM)으로 대체.
+    if "C1_NM" in df.columns:
+        item_col = "C1_NM"
+    elif "ITM_ID" in df.columns:
+        item_col = "ITM_ID"
+    elif "ITM_NM" in df.columns:
+        item_col = "ITM_NM"
+    else:
+        item_col = None
     df = _select_primary_item(df, item_col, item_keyword)
 
     def _parse_prd(t: str) -> pd.Timestamp:
@@ -903,24 +918,59 @@ def get_kosis_series(tbl_id: str, org_id: str = "343",
 def get_kospi_per() -> pd.Series:
     """
     코스피 PER(일반).
-    ECOS(한국은행), KOSIS(통계청), KRX(pykrx) 세 경로를 모두 시도했으나 전부
-    Streamlit Cloud에서 접속 차단(또는 로그인 실패)이 확인되어 결측 처리로 확정.
+    - 로컬 PC(국내 IP) 등 KOSIS 접속이 가능한 환경에서는 실제 KOSIS API(tblId=
+      DT_343_2010_S0033)를 호출해 실데이터를 가져온다.
+    - Streamlit Community Cloud 등 접속이 차단된 환경에서는 get_kosis_series() 내부의
+      짧은 타임아웃(8초)으로 빠르게 실패하고, 아래 except에서 잡아 기존과 동일하게
+      결측 처리 메시지로 대체한다. (2026-08-19 로컬 접속 재확인 결과, 국내 IP에서는
+      ECOS/KOSIS 모두 정상 접속됨을 확인 — DEVELOPMENT_LOG.md 6번 항목 참고)
+    - 2026-08-19 원본 응답 구조 진단 결과, 세부항목 구분은 C1_NM 컬럼에 있고
+      정확한 항목명은 영문 'KOSPI'임을 확인(한글 '코스피'로는 매칭 안 됨).
+      2026년 1~6월 실제 수치(21.8~32.3배)를 언론 보도(코스피 266.8% 급등,
+      밸류에이션 부담 확대 기사 등)와 대조해 정확함을 확인.
     """
-    raise ValueError("해당 데이터를 불러올 수 없습니다.")
+    try:
+        return get_kosis_series(tbl_id="DT_343_2010_S0033", item_keyword="KOSPI")
+    except Exception:
+        raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
 def get_kospi_pbr() -> pd.Series:
-    """코스피 PBR. (사유는 get_kospi_per 참고)"""
-    raise ValueError("해당 데이터를 불러올 수 없습니다.")
+    """
+    코스피 PBR(tblId=DT_343_2010_S0034).
+    동작 방식은 get_kospi_per() 참고. 2026-08-19 진단 결과 item_keyword='KOSPI'로
+    필터링한 2026년 1~6월 실제값(1.68~2.59배)이 실제 시장 랠리 상황과 부합함을 확인.
+    """
+    try:
+        return get_kosis_series(tbl_id="DT_343_2010_S0034", item_keyword="KOSPI")
+    except Exception:
+        raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
 def get_kospi_dividend_yield() -> pd.Series:
-    """코스피 배당수익률(%). (사유는 get_kospi_per 참고)"""
-    raise ValueError("해당 데이터를 불러올 수 없습니다.")
+    """
+    코스피 배당수익률(%, tblId=DT_343_2010_S0032).
+    동작 방식은 get_kospi_per() 참고. 2026-08-19 진단 결과 item_keyword='KOSPI'로
+    필터링한 2026년 1~6월 실제값(0.75~1.09%)이 언론 보도(2026년 5월 0.92%,
+    2000년 이후 최저치 근접)와 정확히 일치함을 확인.
+    """
+    try:
+        return get_kosis_series(tbl_id="DT_343_2010_S0032", item_keyword="KOSPI")
+    except Exception:
+        raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
 def get_kospi_market_cap() -> pd.Series:
-    """코스피 시가총액. (사유는 get_kospi_per 참고)"""
+    """
+    코스피 시가총액.
+    ⚠ 2026-08-19 진단: tblId=DT_343_2010_S0026("업종별 시가총액")을 시도했으나,
+    28개 업종 항목의 '계'(합계)를 실제 공식 시가총액(2026년 6월 약 7,215조원,
+    한국거래소·언론 보도 기준)과 비교한 결과 약 865조원으로 8배 가까이 축소되어
+    나타남 — 이 표는 코스피 '전체' 시가총액이 아닌 것으로 판단되어 사용을 보류함.
+    정확한 tblId(코스피 전체 시가총액 단일 시계열)를 아직 확정하지 못해, 잘못된
+    수치를 보여주는 것보다 기존과 동일하게 결측 처리를 유지한다. 추후 정확한
+    tblId를 KOSIS 사이트에서 직접 확인해 교체할 것.
+    """
     raise ValueError("해당 데이터를 불러올 수 없습니다.")
 
 
